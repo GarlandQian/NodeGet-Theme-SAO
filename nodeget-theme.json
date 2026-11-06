@@ -1,0 +1,11 @@
+{
+  "name": "NodeGet-Theme-SAO",
+  "short": "NodeGetSAO",
+  "description": "SAO 风格的 NodeGet 多主控监控主题",
+  "version": "1.3.6",
+  "author": "WAOR; NodeGet adaptation by GarlandQian",
+  "preview": "preview.png",
+  "repository": "https://github.com/GarlandQian/NodeGet-Theme-SAO",
+  "dist_page": "",
+  "license": "MIT"
+}

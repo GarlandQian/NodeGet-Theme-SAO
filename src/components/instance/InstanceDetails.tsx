@@ -44,6 +44,11 @@ export function InstanceDetails({
   if (!meta || !metrics) return null;
 
   const isOnline = metrics.online;
+  if (isOnline == null) {
+    return <InstancePanel title={meta.name} titleAction={<InstanceSwitcher currentUuid={uuid} />}>
+      <p className="py-6 text-[13px] text-(--text-secondary)">{metrics.dataStatus === "forbidden" ? "没有权限读取实时数据" : metrics.dataStatus === "partial" ? "部分实时指标缺失，等待完整上报。" : "实时数据暂不可用，等待有效上报或连接恢复。"}</p>
+    </InstancePanel>;
+  }
   const uptime = formatUptimeDays(metrics.uptime);
   const hasCycle = metrics.cycleUp != null && metrics.cycleDown != null;
   const cycleUp = metrics.cycleUp ?? metrics.trafficUp;
@@ -69,6 +74,7 @@ export function InstanceDetails({
         isOnline ? undefined : "节点当前离线，以下展示最近一次上报的缓存数据。"
       }
     >
+      {(meta.static_status === "forbidden" || meta.metadata_status === "forbidden") && <p role="status" className="mb-3 text-[12px] text-(--text-secondary)">部分节点信息无读取权限，当前仅展示可读取的数据。</p>}
       <div className="instance-info-groups">
         <div className="instance-info-group">
           <div className="instance-info-group-title">系统</div>
@@ -149,7 +155,7 @@ export function InstanceDetails({
                 className={`instance-progress-track${trafficUsage.unlimited ? " is-unlimited" : ""}`}
                 aria-hidden
               >
-                {!trafficUsage.unlimited && (
+                {!trafficUsage.unlimited && hasCycle && (
                   <span
                     className="instance-progress-fill"
                     style={{ width: `${trafficUsage.fraction * 100}%` }}
@@ -159,8 +165,9 @@ export function InstanceDetails({
               <span className="instance-info-note">
                 {trafficUsage.unlimited
                   ? `${formatBytes(trafficUsage.used)} / ∞`
-                  : `${formatBytes(trafficUsage.used)} / ${formatBytes(trafficUsage.limit)}`}
+                  : hasCycle ? `${formatBytes(trafficUsage.used)} / ${formatBytes(trafficUsage.limit)}` : `暂无周期数据 / ${formatBytes(trafficUsage.limit)}`}
               </span>
+              {metrics.cyclePartial && <span className="instance-info-note">周期快照未覆盖完整时段，实际用量可能更高。</span>}
               {hasCycle && (
                 <span className="instance-info-note">
                   开机累计：↑ {formatBytes(metrics.trafficUp)} · ↓ {formatBytes(metrics.trafficDown)}

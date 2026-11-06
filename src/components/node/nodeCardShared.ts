@@ -2,7 +2,8 @@
 
 import { formatUptimeDays, trimFixed } from "@/utils/format";
 import { latencyHeatColor, lossHeatColor } from "@/utils/metricTone";
-import type { PingOverviewBucket } from "@/types/komari";
+import type { PingDataIssue, PingOverviewBucket } from "@/types/models";
+import { pingIssueLabel } from "@/utils/pingStatus";
 
 /** 卡片标签行的完整 tag 列表 tooltip(几种卡片布局共用同一文案)。 */
 export function joinTagTitle(tags: { label: string }[]) {
@@ -24,12 +25,13 @@ export function formatCompactExpire({ value, unit }: { value: string; unit: stri
 
 import { CHINESE_YEAR_PAY_NAMES, normalizeBillingCycle } from "@/utils/billing";
 
-/** 格式化紧凑卡片隐藏价格时的精简账单周期（完全对齐 Komari 后台设计）。 */
+/** 格式化紧凑卡片隐藏价格时的精简账单周期。 */
 export function formatCompactBillingCycle(
   billingCycle: string | number | null | undefined,
   price?: number,
 ): string {
   if (price === -1) return "免费";
+  if (billingCycle == null || String(billingCycle).trim() === "") return "周期未知";
   const cycle = normalizeBillingCycle(billingCycle);
   switch (cycle.kind) {
     case "lifetime":
@@ -61,12 +63,20 @@ export function pingEmptyLabels(
   hasHomepagePingBinding: boolean,
   pingLoading = false,
   pingError = false,
+  dataIssue?: PingDataIssue,
+  hasSamples = false,
 ): { title: string; text: string } {
+  if (hasHomepagePingBinding && dataIssue && dataIssue.status !== "partial") {
+    return { title: dataIssue.message, text: pingIssueLabel(dataIssue)! };
+  }
   if (hasHomepagePingBinding && pingLoading) {
     return { title: "正在加载首页 Ping", text: "加载中" };
   }
   if (hasHomepagePingBinding && pingError) {
     return { title: "首页 Ping 加载失败", text: "加载失败" };
+  }
+  if (hasHomepagePingBinding && hasSamples) {
+    return { title: "最近一次 Ping 未成功响应", text: "超时" };
   }
   return hasHomepagePingBinding
     ? { title: "暂无有效样本", text: "无样本" }
@@ -144,7 +154,7 @@ import type {
   PingLatencyThresholds,
   PingLossColors,
   PingLossThresholds,
-} from "@/types/komari";
+} from "@/types/models";
 import { resolveCustomLatencyColor, resolveCustomLossColor } from "@/utils/metricTone";
 
 export interface HealthBarOptions {

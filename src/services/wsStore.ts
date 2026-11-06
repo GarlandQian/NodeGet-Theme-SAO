@@ -1,4 +1,4 @@
-import type { NodeInfo, NodeMetrics, NodeRealtime, TrafficTrendSample } from "@/types/komari";
+import type { NodeInfo, NodeMetrics, NodeRealtime, TrafficTrendSample } from "@/types/models";
 import { getNodes, getNodesLatestStatus } from "@/services/api";
 
 type Listener = () => void;
@@ -20,6 +20,8 @@ export interface StoreStatusSnapshot {
 
 export interface HomeNodeSummary {
   uuid: string;
+  source_id?: string;
+  source_name?: string;
   group: string;
   region: string;
   hidden: boolean;
@@ -155,9 +157,9 @@ function alignEmptyMetricsTotals(metrics: NodeMetrics, info: NodeInfo): NodeMetr
   };
 }
 
-// 累计流量直接跟随后端计数器下降；0 视为本帧缺样，避免局部帧闪零。
-export function resolveTrafficTotal(previous: number, raw: number): number {
-  return Number.isFinite(raw) && raw > 0 ? raw : previous;
+// 累计值包含有效的 0；只有缺失或非法读数才保留上次值。
+export function resolveTrafficTotal(previous: number, raw: number | undefined): number {
+  return typeof raw === "number" && Number.isFinite(raw) && raw >= 0 ? raw : previous;
 }
 
 function resolveTrafficTotals(previous: NodeMetrics, nextUp: number, nextDown: number) {
@@ -170,7 +172,7 @@ function resolveTrafficTotals(previous: NodeMetrics, nextUp: number, nextDown: n
 function mergeRealtime(
   metrics: NodeMetrics,
   rt: NodeRealtime,
-  online: boolean,
+  online: boolean | null,
 ): NodeMetrics {
   const ramUsed = rt.ram.used;
   const ramTotal = rt.ram.total;
@@ -214,6 +216,7 @@ function mergeRealtime(
 function shallowEqualMetrics(a: NodeMetrics, b: NodeMetrics) {
   return (
     a.online === b.online &&
+    a.dataStatus === b.dataStatus &&
     a.cpuPct === b.cpuPct &&
     a.ramUsed === b.ramUsed &&
     a.ramTotal === b.ramTotal &&
@@ -229,6 +232,7 @@ function shallowEqualMetrics(a: NodeMetrics, b: NodeMetrics) {
     a.trafficDown === b.trafficDown &&
     a.cycleUp === b.cycleUp &&
     a.cycleDown === b.cycleDown &&
+    a.cyclePartial === b.cyclePartial &&
     a.uptime === b.uptime &&
     a.load1 === b.load1 &&
     a.load5 === b.load5 &&
@@ -243,6 +247,8 @@ function shallowEqualMetrics(a: NodeMetrics, b: NodeMetrics) {
 function shallowEqualNodeInfo(a: NodeInfo, b: NodeInfo) {
   return (
     a.uuid === b.uuid &&
+    a.source_id === b.source_id &&
+    a.source_name === b.source_name &&
     a.name === b.name &&
     a.group === b.group &&
     a.region === b.region &&
@@ -501,15 +507,15 @@ export function cycleTrafficFromLatest(raw: unknown): { up: number | null; down:
   const value = (input: unknown) =>
     typeof input === "number" && Number.isSafeInteger(input) && input >= 0 ? input : null;
 
-  if (quality.traffic_cycle === "ok") {
-    return { up: value(payload.traffic_up), down: value(payload.traffic_down) };
-  }
   if (payload.traffic_cycle != null && typeof payload.traffic_cycle === "object") {
     const cycleRecord = asRecord(payload.traffic_cycle);
     return {
       up: value(cycleRecord.up ?? cycleRecord.traffic_up),
       down: value(cycleRecord.down ?? cycleRecord.traffic_down),
     };
+  }
+  if (quality.traffic_cycle === "ok") {
+    return { up: value(payload.traffic_up), down: value(payload.traffic_down) };
   }
   if (payload.cycle_up != null || payload.cycle_down != null) {
     return { up: value(payload.cycle_up), down: value(payload.cycle_down) };
@@ -528,10 +534,11 @@ function asBoolean(value: unknown, fallback: boolean): boolean {
   return fallback;
 }
 
-function resolveOnline(rawRecord: unknown): boolean {
-  if (rawRecord == null) return false;
+export function resolveOnline(rawRecord: unknown): boolean | null {
+  if (rawRecord == null) return null;
   if (typeof rawRecord === "boolean") return rawRecord;
   const record = asRecord(rawRecord);
+  if (record.online === null || Object.keys(record).length === 0) return null;
   return asBoolean(record.online, Object.keys(record).length > 0);
 }
 
@@ -560,7 +567,8 @@ function normalizeRealtime(
   metrics: NodeMetrics,
 ): NodeRealtime | null {
   const payload = asRecord(raw);
-  if (Object.keys(payload).length === 0) return null;
+  if (payload.online === null || Object.keys(payload).length === 0 ||
+      !["cpu", "ram", "network", "net_in", "net_out"].some((key) => key in payload)) return null;
 
   const cpu = asRecord(payload.cpu);
   const ram = asRecord(payload.ram);
@@ -597,8 +605,8 @@ function normalizeRealtime(
       network: {
         up: asNumber(network.up),
         down: asNumber(network.down),
-        totalUp: asNumber(network.totalUp),
-        totalDown: asNumber(network.totalDown),
+        totalUp: asNumber(network.totalUp, metrics.trafficUp),
+        totalDown: asNumber(network.totalDown, metrics.trafficDown),
       },
       connections: {
         tcp: asNumber(connections.tcp),
@@ -632,8 +640,8 @@ function normalizeRealtime(
     network: {
       up: asNumber(payload.net_out),
       down: asNumber(payload.net_in),
-      totalUp: asNumber(payload.net_total_up),
-      totalDown: asNumber(payload.net_total_down),
+      totalUp: asNumber(payload.net_total_up, metrics.trafficUp),
+      totalDown: asNumber(payload.net_total_down, metrics.trafficDown),
     },
     connections: {
       tcp: resolveFlatConnectionsTcp(payload),
@@ -662,9 +670,11 @@ function applyLatestStatus(records: Record<string, unknown>) {
     const merged = realtime
       ? mergeRealtime(prev, realtime, online)
       : { ...prev, online };
+    merged.dataStatus = String(asRecord(rawRecord).data_status || "");
     const cycle = cycleTrafficFromLatest(rawRecord);
     merged.cycleUp = cycle.up;
     merged.cycleDown = cycle.down;
+    merged.cyclePartial = asRecord(asRecord(rawRecord).quality).traffic_cycle === "partial";
 
     if (!shallowEqualMetrics(prev, merged)) {
       if (nextMetricsByUuid === state.metricsByUuid) {
@@ -762,8 +772,10 @@ function applyNodeSync(
         const realtime = normalizeRealtime(rawRecord, info, base);
         nextMetrics = realtime ? mergeRealtime(base, realtime, online) : { ...base, online };
         const cycle = cycleTrafficFromLatest(rawRecord);
+        nextMetrics.dataStatus = String(asRecord(rawRecord).data_status || "");
         nextMetrics.cycleUp = cycle.up;
         nextMetrics.cycleDown = cycle.down;
+        nextMetrics.cyclePartial = asRecord(asRecord(rawRecord).quality).traffic_cycle === "partial";
       } else {
         nextMetrics = base;
       }
@@ -906,12 +918,15 @@ async function refreshLatestStatus() {
     }
   } catch {
     if (controller.signal.aborted) return;
+    const applied = applyLatestStatus(Object.fromEntries(state.order.map(uuid => [uuid, { online: null, data_status: "error" }])));
     commit(
       {
         ...state,
+        metricsByUuid: applied.nextMetricsByUuid,
+        trafficTrends: applied.nextTrafficTrends,
         failureStreak: state.failureStreak + 1,
       },
-      { storeStatus: true },
+      { storeStatus: true, metrics: applied.touchedMetrics, trafficTrends: applied.touchedTrafficTrends },
     );
   } finally {
     if (liveStatusController === controller) liveStatusController = null;
@@ -931,7 +946,7 @@ async function bootstrap() {
   refreshInFlight = true;
 
   try {
-    // 1. 获取节点元数据列表（利用 index.html 超前预取的 rpc_nodes 瞬间返回）
+    // 1. 并行读取各主控的节点元数据。
     const nodes = sortNodes(await getNodes({ signal: controller.signal }));
     if (controller.signal.aborted) return;
 
@@ -1205,6 +1220,8 @@ export function getHomeNodeSummariesSnapshot(): HomeNodeSummary[] {
       const metrics = state.metricsByUuid[uuid];
       return {
         uuid,
+        source_id: meta.source_id,
+        source_name: meta.source_name,
         group: String(meta.group || "").trim(),
         region: String(meta.region || "").trim(),
         hidden: meta.hidden,
@@ -1229,7 +1246,7 @@ export function getHomeNodeSummariesSnapshot(): HomeNodeSummary[] {
         load15: metrics?.online === false ? 0 : metrics?.load15 ?? 0,
       };
     })
-    .filter((item): item is HomeNodeSummary => Boolean(item));
+    .filter((item): item is NonNullable<typeof item> => Boolean(item));
 
   if (
     next.length === homeNodeSummariesSnapshot.length &&
@@ -1238,6 +1255,8 @@ export function getHomeNodeSummariesSnapshot(): HomeNodeSummary[] {
       return (
         prev &&
         prev.uuid === item.uuid &&
+        prev.source_id === item.source_id &&
+        prev.source_name === item.source_name &&
         prev.group === item.group &&
         prev.region === item.region &&
         prev.hidden === item.hidden &&

@@ -1,8 +1,7 @@
-import type { NodeInfo } from "@/types/komari";
+import type { NodeInfo } from "@/types/models";
 
 const GIB = 1024 ** 3;
 const TIB = 1024 ** 4;
-const MIB = 1024 ** 2;
 
 function dateAfter(days: number) {
   return new Date(Date.now() + days * 86_400_000).toISOString();
@@ -197,594 +196,384 @@ const BASE_NODES: NodeInfo[] = [
   },
 ];
 
-function getMockNodes(): NodeInfo[] {
-  if (typeof window === "undefined") return BASE_NODES;
-  const params = new URLSearchParams(window.location.search);
-  let sessionNodes = 0;
-  try {
-    sessionNodes = Number(window.sessionStorage?.getItem("komari_dev_nodes")) || 0;
-  } catch {}
-  const targetCount = Number(params.get("nodes")) || sessionNodes;
-  if (!targetCount || targetCount <= BASE_NODES.length) {
-    return BASE_NODES;
-  }
+type Row = Record<string, unknown>;
+type MockSource = { id: string; name: string; url: string; nodes: NodeInfo[] };
+type RpcRequest = { id?: number | string; method?: string; params?: Row };
 
-  // 如果用户指定了像 ?mock=1&nodes=60 或 100，自动扩充复制
-  const DIVERSE_REGIONS = [
-    "NL", "GB", "FR", "KR", "CA", "TW", "SE", "CH", "IN", "BR", "RU", "ZA", "IT", "ES",
-  ];
-  const result: NodeInfo[] = [...BASE_NODES];
-  let i = BASE_NODES.length;
-  while (result.length < targetCount) {
-    const template = BASE_NODES[i % BASE_NODES.length]!;
-    const copyIndex = Math.floor(i / BASE_NODES.length) + 1;
-    const extraRegion = DIVERSE_REGIONS[(i - BASE_NODES.length) % DIVERSE_REGIONS.length];
-    result.push({
+function object(value: unknown): Row {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Row : {};
+}
+
+export function getMockParameters(location: { search: string; hash?: string }) {
+  const parameters = new URLSearchParams(location.search);
+  const hashQuery = location.hash?.split("?")[1];
+  if (hashQuery) new URLSearchParams(hashQuery).forEach((value, key) => parameters.set(key, value));
+  return parameters;
+}
+
+function fixtureNodes(parameters: URLSearchParams): NodeInfo[] {
+  let storedCount = 0;
+  try { storedCount = Number(sessionStorage.getItem("nodeget-sao:dev-nodes")) || 0; } catch { /* 测试环境可能没有浏览器存储。 */ }
+  const count = Math.min(500, Math.max(6, Number(parameters.get("nodes")) || storedCount || 6));
+  const regions = ["NL", "GB", "FR", "KR", "CA", "TW", "SE", "CH", "IN", "BR", "RU", "ZA"];
+  return Array.from({ length: count }, (_, index) => {
+    const template = BASE_NODES[index % BASE_NODES.length]!;
+    return index < BASE_NODES.length ? { ...template } : {
       ...template,
-      region: extraRegion,
-      uuid: `${template.uuid}-sub-${copyIndex}`,
-      name: `${template.name} #${copyIndex}`,
-      weight: template.weight + i * 5,
-      ipv4: `203.0.113.${(10 + i) % 250}`,
-      ipv6: `2001:db8::${(10 + i).toString(16)}`,
-    });
-    i++;
-  }
-  return result;
-}
-
-const nodes: NodeInfo[] = getMockNodes();
-
-function wave(seed: number, period: number, amplitude: number, offset: number) {
-  return offset + Math.sin((Date.now() / period) * (1 + seed * 0.17)) * amplitude;
-}
-
-function clamp(value: number, min: number, max: number) {
-  return Math.min(max, Math.max(min, value));
-}
-
-function getNodeStatusProfile(index: number, node: NodeInfo) {
-  // 32 秒全景演化周期（各 8 秒），自动平滑轮转触发所有徽章状态：
-  // 0~8s: IDLE (总带宽 < 125KB/s) | 全健康
-  // 8~16s: LIGHT (总带宽 125KB/s ~ 1.25MB/s) | 全健康
-  // 16~24s: ACTIVE (总带宽 1.25MB/s ~ 12.5MB/s) | 存在离线 (1)
-  // 24~32s: SURGE (总带宽 > 12.5MB/s) | 存在离线 (1)
-  const cyclePeriod = 32;
-  const cycleTime = (Date.now() / 1000) % cyclePeriod;
-
-  // 健康状态轮转：前半周全节点健康在线；后半周节点 #5 产生离线
-  const isOffline = cycleTime >= 16 && index === 5;
-  const isHighLoad = !isOffline && (index % 3 === 0 || cycleTime >= 24);
-
-  if (isOffline) {
-    return [0, 0, 0, 38, 232, 0, 0, 1.1 * TIB, 880 * GIB, false] as const;
-  }
-
-  const cpu = isHighLoad
-    ? Math.round(clamp(wave(index, 14_000, 8, 88), 75, 98))
-    : Math.round(clamp(wave(index, 24_000, 25, 42), 5, 75));
-
-  const load = +(cpu * 0.08 * (node.cpu_cores || 4) / 4).toFixed(2);
-  const swapPct = isHighLoad ? 35 : Math.round(clamp(wave(index, 30_000, 10, 12), 0, 40));
-  const diskPct = Math.round(clamp(30 + (index % 7) * 9, 10, 92));
-
-  // Ping 延迟根据地区产生拟真基准延迟
-  const region = (node.region || "").toUpperCase();
-  let basePing = 36;
-  if (region === "HK" || region === "TW" || region === "SG" || region === "JP") {
-    basePing = 24 + (index % 4) * 14;
-  } else if (region === "US" || region === "CA") {
-    basePing = 135 + (index % 3) * 8;
-  } else if (region === "DE" || region === "GB" || region === "FR" || region === "CH") {
-    basePing = 175 + (index % 3) * 7;
-  } else if (region === "AU" || region === "KR") {
-    basePing = 215 + (index % 3) * 16;
-  } else {
-    basePing = 50 + (index % 5) * 30;
-  }
-
-  // 吞吐阶梯：根据当前演化周期轮转，使全站总带宽平滑经历 4 级阶梯
-  let upRate = 5_000;
-  let downRate = 8_000;
-  if (cycleTime >= 24) {
-    // 梯级 3: SURGE (全站 > 12.5 MB/s，单机 3~6 MB/s)
-    upRate = Math.round(clamp(wave(index, 6_000, 800_000, 3_200_000), 2_000_000, 5_500_000));
-    downRate = Math.round(clamp(wave(index + 1, 7_000, 1_200_000, 4_500_000), 2_800_000, 7_000_000));
-  } else if (cycleTime >= 16) {
-    // 梯级 2: ACTIVE (全站 1.25 ~ 12.5 MB/s，单机 400KB ~ 1MB/s)
-    upRate = Math.round(clamp(wave(index, 8_000, 150_000, 450_000), 280_000, 750_000));
-    downRate = Math.round(clamp(wave(index + 1, 9_000, 200_000, 650_000), 400_000, 1_100_000));
-  } else if (cycleTime >= 8) {
-    // 梯级 1: LIGHT (全站 125KB/s ~ 1.25 MB/s，单机 40KB ~ 100KB/s)
-    upRate = Math.round(clamp(wave(index, 10_000, 15_000, 45_000), 25_000, 75_000));
-    downRate = Math.round(clamp(wave(index + 1, 11_000, 20_000, 60_000), 35_000, 110_000));
-  } else {
-    // 梯级 0: IDLE (全站 < 125 KB/s，单机 3KB ~ 12KB/s)
-    upRate = Math.round(clamp(wave(index, 12_000, 2_000, 6_000), 3_000, 11_000));
-    downRate = Math.round(clamp(wave(index + 1, 13_000, 3_000, 9_000), 4_000, 15_000));
-  }
-
-  const totalUp = (800 + index * 120) * GIB;
-  const totalDown = (1200 + index * 180) * GIB;
-
-  return [cpu, load, swapPct, diskPct, basePing, upRate, downRate, totalUp, totalDown, true] as const;
-}
-
-function latestStatus() {
-  const now = Date.now();
-  return Object.fromEntries(
-    nodes.map((node, index) => {
-      const [cpu, load, swapPct, diskPct, , up, down, totalUp, totalDown, online] =
-        getNodeStatusProfile(index, node);
-      if (!online) return [node.uuid, { online: false }];
-      const memoryPct = index % 9 === 2 ? 88 : 36 + (index % 6) * 7;
-      return [
-        node.uuid,
-        {
-          online: true,
-          cpu,
-          ram: (node.mem_total * memoryPct) / 100,
-          ram_total: node.mem_total,
-          swap: (node.swap_total * swapPct) / 100,
-          swap_total: node.swap_total,
-          load,
-          load5: +(load * 0.86).toFixed(2),
-          load15: +(load * 0.72).toFixed(2),
-          disk: (node.disk_total * diskPct) / 100,
-          disk_total: node.disk_total,
-          net_out: up,
-          net_in: down,
-          net_total_up: totalUp,
-          net_total_down: totalDown,
-          uptime: (index + 3) * 864_000,
-          process: 96 + (index % 10) * 21,
-          connections: 180 + (index % 10) * 44,
-          connections_udp: 12 + (index % 10) * 3,
-          updated_at: now,
-        },
-      ];
-    }),
-  );
-}
-
-function loadRecords(uuid: string) {
-  const node = nodes.find((item) => item.uuid === uuid) ?? nodes[0];
-  const index = Math.max(0, nodes.indexOf(node));
-  const profile = getNodeStatusProfile(index, node);
-  const now = Date.now();
-  return Array.from({ length: 72 }, (_, sample) => {
-    const phase = sample / 7 + index;
-    const cpu = Math.max(2, Math.min(98, profile[0] + Math.sin(phase) * 10));
-    const ram = node.mem_total * Math.min(0.94, 0.35 + (index % 6) * 0.08 + Math.cos(phase) * 0.04);
-    return {
-      cpu,
-      gpu: 0,
-      ram,
-      ram_total: node.mem_total,
-      swap: node.swap_total * 0.08,
-      swap_total: node.swap_total,
-      load: +(profile[1] + Math.sin(phase) * 0.8).toFixed(2),
-      temp: 48 + (index % 6) * 4 + Math.sin(phase) * 3,
-      disk: node.disk_total * (profile[3] / 100),
-      disk_total: node.disk_total,
-      net_in: Math.max(0, profile[6] * (0.7 + Math.sin(phase) * 0.24)),
-      net_out: Math.max(0, profile[5] * (0.7 + Math.cos(phase) * 0.24)),
-      net_total_up: Math.max(0, profile[7] - (71 - sample) * (12 + (index % 6) * 3) * MIB),
-      net_total_down: Math.max(0, profile[8] - (71 - sample) * (28 + (index % 6) * 5) * MIB),
-      process: 100 + (index % 10) * 20,
-      connections: 180 + (index % 10) * 40,
-      connections_udp: 16,
-      time: now - (71 - sample) * 300_000,
-      client: node.uuid,
+      uuid: `${template.uuid}-sub-${Math.floor(index / BASE_NODES.length) + 1}`,
+      name: `${template.name} #${Math.floor(index / BASE_NODES.length) + 1}`,
+      region: regions[(index - BASE_NODES.length) % regions.length]!,
+      weight: index * 10,
     };
   });
 }
 
-function trafficMetricPayload(params: {
-  metric_keys?: string[];
-  entity_ids?: string[];
-  start?: string;
-  end?: string;
-}) {
-  const start = Number.isFinite(Date.parse(params.start ?? ""))
-    ? Date.parse(params.start ?? "")
-    : new Date().setHours(0, 0, 0, 0);
-  const end = Number.isFinite(Date.parse(params.end ?? ""))
-    ? Date.parse(params.end ?? "")
-    : Date.now();
-  const entityIds = params.entity_ids?.length ? params.entity_ids : nodes.map((node) => node.uuid);
-  const metricKeys = params.metric_keys ?? [];
-  const intervalMs = 5 * 60 * 1000;
-  const pointCount = Math.max(1, Math.ceil((end - start) / intervalMs));
-  const series = entityIds.flatMap((uuid) => {
-    const index = nodes.findIndex((node) => node.uuid === uuid);
-    if (index < 0) return [];
-    const profile = getNodeStatusProfile(index, nodes[index]);
-    if (!profile[9]) return [];
-    return metricKeys.map((metricKey) => ({
-      metric_key: metricKey,
-      entity_id: uuid,
-      interval_seconds: intervalMs / 1000,
-      points: Array.from({ length: pointCount }, (_, pointIndex) => {
-        const phase = pointIndex / 9 + index * 0.8;
-        const time = new Date(start + pointIndex * intervalMs).toISOString();
-        const value =
-          metricKey === "traffic.up"
-            ? (12 + (index % 6) * 3) * MIB * (0.72 + Math.sin(phase) * 0.24)
-            : metricKey === "traffic.down"
-              ? (28 + (index % 6) * 5) * MIB * (0.74 + Math.cos(phase) * 0.22)
-              : metricKey === "net.out.rate"
-                ? profile[5] * (0.62 + Math.sin(phase) * 0.34)
-                : profile[6] * (0.66 + Math.cos(phase) * 0.3);
-        return { time, value: Math.max(0, value), count: 1 };
-      }),
-    }));
-  });
+function cycleDays(value: string): number {
+  return value === "quarter" ? 90 : value === "year" ? 365 : 30;
+}
+
+function metadata(node: NodeInfo): Row {
   return {
-    start: new Date(start).toISOString(),
-    end: new Date(end).toISOString(),
-    series,
-    count: series.length,
+    metadata_name: node.name,
+    metadata_region: node.region,
+    metadata_country: node.region,
+    metadata_provider: "演示节点",
+    metadata_city: "",
+    metadata_public_remark: node.public_remark,
+    metadata_tags: node.tags.split(";").map(tag => tag.trim()),
+    metadata_hidden: false,
+    metadata_order: node.weight,
+    metadata_group: node.group,
+    metadata_price: node.price,
+    metadata_price_unit: node.currency,
+    metadata_price_cycle: cycleDays(node.billing_cycle),
+    metadata_expire_time: Date.parse(node.expired_at),
+    // 基础配额约定使用字节，不混用扩展协议中的 GiB。
+    metadata_traffic_limit: node.traffic_limit,
+    metadata_traffic_limit_type: node.traffic_limit_type,
+    metadata_traffic_period_start: new Date().setHours(0, 0, 0, 0),
   };
 }
 
-// queryMetrics 的 ping 路径:latency/loss 双序列,tags 携带 task_id;丢包桶 latency 为
-// null、loss 为 1,与真实后端聚合语义一致(mergePingMetricSeries 会还原成 -1 记录)。
-function pingMetricPayload(params: {
-  metric_keys?: string[];
-  entity_ids?: string[];
-  hours?: number;
-  tags?: { task_id?: string };
-}) {
-  const end = Date.now();
-  const hours = typeof params.hours === "number" && params.hours > 0 ? params.hours : 6;
-  const intervalMs = 60_000;
-  const pointCount = Math.min(360, Math.max(12, Math.round((hours * 3_600_000) / intervalMs)));
-  const start = end - pointCount * intervalMs;
-  const entityIds = params.entity_ids?.length ? params.entity_ids : nodes.map((node) => node.uuid);
-  const requestedTask = Number(params.tags?.task_id);
-  const tasks =
-    Number.isFinite(requestedTask) && requestedTask > 0
-      ? pingTasks.filter((task) => task.id === requestedTask)
-      : pingTasks;
-  const metricKeys = (params.metric_keys ?? []).filter((key) => key.startsWith("ping."));
-  const series = entityIds.flatMap((uuid) => {
-    const index = nodes.findIndex((node) => node.uuid === uuid);
-    if (index < 0) return [];
-    const profile = getNodeStatusProfile(index, nodes[index]);
-    return tasks.flatMap((task) =>
-      metricKeys.map((metricKey) => ({
-        metric_key: metricKey,
-        entity_id: uuid,
-        tags: { task_id: String(task.id) },
-        interval_seconds: intervalMs / 1000,
-        points: Array.from({ length: pointCount }, (_, pointIndex) => {
-          const time = new Date(start + (pointIndex + 1) * intervalMs).toISOString();
-          const lost = !profile[9] || (index % 11 === 0 && pointIndex % 17 === 0);
-          if (metricKey === "ping.loss") {
-            return { time, value: lost ? 1 : 0, count: 1 };
+function counters(node: NodeInfo, time: number) {
+  const age = Math.max(0, time - Date.UTC(2026, 0, 1)) / 1000;
+  const seed = (node.weight % 70) / 10 + 1;
+  return {
+    total_received: Math.round((1200 + seed * 180) * GIB + age * (28 + seed * 5) * 1024),
+    total_transmitted: Math.round((800 + seed * 120) * GIB + age * (12 + seed * 3) * 1024),
+  };
+}
+
+function summary(node: NodeInfo, timestamp: number): Row {
+  const seed = node.weight / 10;
+  const phase = timestamp / 80_000 + seed;
+  const cpu = Math.max(2, Math.min(97, 28 + seed % 6 * 8 + Math.sin(phase) * 13));
+  return {
+    uuid: node.uuid, timestamp,
+    cpu_usage: cpu,
+    gpu_usage: 0,
+    total_memory: node.mem_total,
+    used_memory: Math.round(node.mem_total * (0.35 + seed % 5 * 0.08 + Math.cos(phase) * 0.03)),
+    total_swap: node.swap_total,
+    used_swap: Math.round(node.swap_total * 0.08),
+    total_space: node.disk_total,
+    available_space: Math.round(node.disk_total * (0.65 - seed % 6 * 0.07)),
+    load_one: cpu / 100 * node.cpu_cores,
+    load_five: cpu / 115 * node.cpu_cores,
+    load_fifteen: cpu / 130 * node.cpu_cores,
+    receive_speed: Math.round((300 + seed * 75) * 1024 * (0.9 + Math.sin(phase) * 0.3)),
+    transmit_speed: Math.round((180 + seed * 48) * 1024 * (0.9 + Math.cos(phase) * 0.3)),
+    ...counters(node, timestamp),
+    tcp_connections: 160 + seed * 12,
+    udp_connections: 16 + seed,
+    process_count: 110 + seed * 7,
+    uptime: Math.max(0, Math.floor((timestamp - Date.UTC(2026, 0, 1)) / 1000)),
+  };
+}
+
+function pickFields(record: Row, fields: unknown): Row {
+  if (!Array.isArray(fields)) return record;
+  return Object.fromEntries(Object.entries(record).filter(([key]) => key === "uuid" || key === "timestamp" || fields.includes(key)));
+}
+
+function queryBounds(query: Row) {
+  const conditions = Array.isArray(query.condition) ? query.condition : [];
+  const filter = Object.assign({}, ...conditions.map(object)) as Row;
+  const interval = Array.isArray(filter.timestamp_from_to) ? filter.timestamp_from_to : [];
+  const end = Number(filter.timestamp_to ?? interval[1]) || Date.now();
+  const start = Number(filter.timestamp_from ?? interval[0]) || end - 6 * 3_600_000;
+  const limit = Math.min(10_000, Math.max(1, Number(filter.limit) || 10_000));
+  return { filter, start, end, limit };
+}
+
+const PING_TASKS = ["中国电信", "中国联通", "中国移动"];
+
+export function createNodeGetMock(parameters = new URLSearchParams()) {
+  const nodes = fixtureNodes(parameters);
+  const midpoint = Math.ceil(nodes.length / 2);
+  const backupNodes = nodes.slice(midpoint);
+  // 第二个主控故意重复一个原生 UUID，用来验证跨主控不会覆盖节点。
+  backupNodes[0] = { ...backupNodes[0]!, uuid: nodes[0]!.uuid };
+  const sources: MockSource[] = [
+    { id: "primary", name: "亚太主控", url: "wss://primary.nodeget-mock.invalid/nodeget/rpc", nodes: nodes.slice(0, midpoint) },
+    { id: "backup", name: "全球主控", url: "wss://backup.nodeget-mock.invalid/nodeget/rpc", nodes: backupNodes },
+  ];
+  const empty = parameters.get("mockEmpty") === "1";
+  const permission = parameters.get("mockPermission") === "1";
+  const legacy = parameters.get("mockVersion") === "0.6.0";
+  const failed = parameters.get("mockFailure") === "1";
+  const config = {
+    user_preferences: {
+      site_name: "NodeGet SAO · 演示",
+      description: "原生 NodeGet 多主控监控预览",
+      footer: "NodeGet SAO · 开发演示数据",
+      theme_settings: {
+        desktopNodeViewMode: "compact",
+        mobileNodeViewMode: "compact",
+        clusterOverviewMode: parameters.get("matrix") === "1" ? "nodes" : "classic",
+        showHomeOverview: true,
+        showGroupTabs: true,
+        showRegionBar: true,
+        showCardGroup: true,
+        enableHomeSort: true,
+        showTrafficPageButton: true,
+        showTrafficPageForGuests: true,
+        showCostSummary: true,
+        showPriceForGuests: parameters.get("costs") === "1",
+        showOverviewRatings: true,
+        showBandwidthRating: true,
+        showPingChart: true,
+      },
+    },
+    site_tokens: sources.map(source => ({
+      id: source.id, name: source.name, backend_url: source.url, token: "DEVELOPMENT_MOCK_ONLY",
+    })),
+  };
+
+  function result(source: MockSource, method: string, params: Row): unknown {
+    if (permission && ["task_query", "agent_query_traffic", "agent_query_traffic_total", "agent_query_traffic_current"].includes(method)) throw 102;
+    const selected = Array.isArray(params.uuids) ? source.nodes.filter(node => (params.uuids as unknown[]).includes(node.uuid)) : source.nodes;
+    switch (method) {
+      case "agent-uuid_list_all":
+        throw 102; // 官方公开 Token 没有 MonitoringUuid::List 管理权限。
+      case "nodeget-server_list_all_agent_uuid":
+        return { uuids: source.nodes.map(node => node.uuid) };
+      case "agent_static_data_multi_last_query":
+        return selected.map(node => pickFields({
+          uuid: node.uuid, timestamp: Date.now(),
+          cpu: { brand: node.cpu_name, logical_cores: node.cpu_cores, physical_cores: node.cpu_cores },
+          system: { system_arch: node.arch, virtualization: node.virtualization, system_name: node.os, system_os_long_version: node.os, system_kernel_version: node.kernel_version },
+        }, params.fields));
+      case "kv_get_multi_value": {
+        const keys = Array.isArray(params.namespace_key) ? params.namespace_key : [];
+        return keys.flatMap(value => {
+          const request = object(value);
+          const node = source.nodes.find(item => item.uuid === request.namespace);
+          const meta = node ? metadata(node) : {};
+          const key = String(request.key);
+          return key in meta ? [{ namespace: request.namespace, key, value: meta[key] }] : [];
+        });
+      }
+      case "agent_dynamic_summary_multi_last_query":
+        return selected.map(node => pickFields(summary(node, node.name.startsWith("Sydney") ? Date.now() - 180_000 : Date.now()), params.fields));
+      case "agent_query_dynamic_summary": {
+        if (empty) return [];
+        const query = object(params.query);
+        const { filter, start, end, limit } = queryBounds(query);
+        const clients = source.nodes.filter(node => !filter.uuid || node.uuid === filter.uuid);
+        const samples: Row[] = [];
+        const step = 300_000;
+        for (let time = Math.floor(end / step) * step; time >= start && samples.length < limit; time -= step) {
+          for (const node of clients) {
+            if (samples.length >= limit) break;
+            samples.push(pickFields(summary(node, time), query.fields));
           }
-          const baseline = profile[4] + (task.id - 1) * 18;
+        }
+        return samples;
+      }
+      case "task_query": {
+        if (parameters.get("mockPartialPing") === "1" && JSON.stringify(params).includes("tcp_ping")) throw 102;
+        if (empty) return [];
+        const { filter, start, end, limit } = queryBounds(object(params.task_data_query));
+        const type = filter.type === "tcp_ping" ? "tcp_ping" : "ping";
+        const clients = source.nodes.filter(node => !filter.uuid || node.uuid === filter.uuid);
+        const tasks = (type === "ping" ? PING_TASKS : ["HTTPS 连通性"]).filter(name => !filter.cron_source || filter.cron_source === name);
+        const samples: Row[] = [];
+        for (let time = Math.floor(end / 60_000) * 60_000; time >= start && samples.length < limit; time -= 60_000) {
+          for (const node of clients) {
+            for (const [taskIndex, name] of tasks.entries()) {
+              if (samples.length >= limit) break;
+              const seed = node.weight / 10;
+              const success = !node.name.startsWith("Sydney") && (Math.floor(time / 60_000) + seed + taskIndex) % 29 !== 0;
+              samples.push({
+                uuid: node.uuid, timestamp: time, storage_time: time,
+                cron_source: name, task_id: `${node.uuid}:${name}:${time}`,
+                success, error_message: success ? null : "mock timeout",
+                task_event_type: { [type]: type === "tcp_ping" ? "example.com:443" : "example.com" },
+                task_event_result: success ? { [type]: 35 + seed * 10 + taskIndex * 18 + Math.round(Math.sin(time / 90_000) * 9) } : {},
+              });
+            }
+          }
+        }
+        return samples;
+      }
+      case "agent_query_traffic_current":
+        return selected.map(node => ({ uuid: node.uuid, interfaces: [{ interface_name: "eth0", ...counters(node, Date.now()), updated_at: Date.now(), last_snapshot_time: Math.floor(Date.now() / 900_000) * 900_000 }] }));
+      case "agent_query_traffic":
+      case "agent_query_traffic_total":
+      case "agent_query_traffic_range":
+      case "agent_query_traffic_detail": {
+        if (legacy && method !== "agent_query_traffic") throw -32601;
+        if (!legacy && method === "agent_query_traffic") throw -32601;
+        if (empty) throw 105;
+        const query = object(params.query);
+        const node = source.nodes.find(item => item.uuid === (query.uuid ?? params.uuid));
+        if (!node) throw 105;
+        const start = Number(query.start_time) || new Date().setHours(0, 0, 0, 0);
+        const end = Number(query.end_time) || Date.now();
+        const first = legacy ? start : Math.ceil(start / 900_000) * 900_000;
+        const last = legacy ? end : Math.floor(end / 900_000) * 900_000;
+        if (query.granularity === "range" || method === "agent_query_traffic_range") return {
+          uuid: node.uuid, interfaces: [{ interface_name: "eth0", first_snapshot_time: Date.now() - 90 * 86_400_000, last_snapshot_time: Math.floor(Date.now() / 900_000) * 900_000 }],
+        };
+        if (method === "agent_query_traffic_detail") {
+          const limit = Math.min(10_000, Math.max(1, Number(query.limit) || 10_000));
+          const cursor = object(query.cursor);
+          const after = Number(cursor.snapshot_time) || 0;
+          const snapshots: Row[] = [];
+          for (let time = Math.max(first, after > 0 ? after + 900_000 : first); time <= last && snapshots.length <= limit; time += 900_000) {
+            snapshots.push({ interface_name: "eth0", snapshot_time: time, ...counters(node, time) });
+          }
+          const more = snapshots.length > limit;
+          const page = snapshots.slice(0, limit);
           return {
-            time,
-            value: lost
-              ? null
-              : Math.max(1, baseline + Math.round(Math.sin(pointIndex / 5 + index) * 9)),
-            count: 1,
+            uuid: node.uuid, start_time: start, end_time: end, snapshots: page,
+            next_cursor: more ? { interface_name: "eth0", snapshot_time: page.at(-1)!.snapshot_time } : null,
+            possible_data_losses: [],
           };
-        }),
-      })),
-    );
-  });
-  return {
-    start: new Date(start).toISOString(),
-    end: new Date(end).toISOString(),
-    series,
-    count: series.length,
-  };
-}
-
-// queryMetrics 的负载路径:直接把 loadRecords 的字段转成对应 metric 序列。
-const LOAD_METRIC_RECORD_FIELD = {
-  "cpu.usage": "cpu",
-  "memory.used": "ram",
-  "swap.used": "swap",
-  "load.average": "load",
-  "disk.used": "disk",
-  "net.in.rate": "net_in",
-  "net.out.rate": "net_out",
-  "net.total.up": "net_total_up",
-  "net.total.down": "net_total_down",
-  "process.count": "process",
-  "connections.tcp": "connections",
-  "connections.udp": "connections_udp",
-} as const;
-
-function loadMetricPayload(params: { metric_keys?: string[]; entity_ids?: string[] }) {
-  const entityIds = params.entity_ids?.length ? params.entity_ids : [nodes[0].uuid];
-  const metricKeys = (params.metric_keys ?? []).filter(
-    (key): key is keyof typeof LOAD_METRIC_RECORD_FIELD => key in LOAD_METRIC_RECORD_FIELD,
-  );
-  const series = entityIds.flatMap((uuid) => {
-    const records = loadRecords(uuid);
-    return metricKeys.map((metricKey) => ({
-      metric_key: metricKey,
-      entity_id: uuid,
-      interval_seconds: 300,
-      points: records.map((record) => ({
-        time: new Date(record.time).toISOString(),
-        value: record[LOAD_METRIC_RECORD_FIELD[metricKey]],
-        count: 1,
-      })),
-    }));
-  });
-  const now = Date.now();
-  return {
-    start: new Date(now - 72 * 300_000).toISOString(),
-    end: new Date(now).toISOString(),
-    series,
-    count: series.length,
-  };
-}
-
-function pingRecords(uuid?: string, taskId = 1) {
-  const clients = uuid ? [uuid] : nodes.map((node) => node.uuid);
-  const now = Date.now();
-  return clients.flatMap((client) => {
-    const index = Math.max(0, nodes.findIndex((node) => node.uuid === client));
-    const profile = getNodeStatusProfile(index, nodes[index] ?? nodes[0]);
-    const baseline = profile[4] + (taskId - 1) * 18;
-    return Array.from({ length: 60 }, (_, sample) => ({
-      task_id: taskId,
-      time: now - (59 - sample) * 60_000,
-      value:
-        !profile[9] || (index % 11 === 0 && sample % 17 === 0)
-          ? -1
-          : Math.max(1, baseline + Math.round(Math.sin(sample / 5 + index) * 9)),
-      client,
-    }));
-  });
-}
-
-const pingTasks = [
-  { id: 1, name: "中国电信", target: "电信探针" },
-  { id: 2, name: "中国联通", target: "联通探针" },
-  { id: 3, name: "中国移动", target: "移动探针" },
-].map((task, index) => ({
-  ...task,
-  interval: 60,
-  loss: 0,
-  clients: nodes.map((node) => node.uuid),
-  type: "icmp",
-  weight: index + 1,
-}));
-
-function json(data: unknown, init?: ResponseInit) {
-  return new Response(JSON.stringify(data), {
-    status: 200,
-    headers: { "Content-Type": "application/json" },
-    ...init,
-  });
-}
-
-export function installDevMockApi() {
-  const nativeFetch = window.fetch.bind(window);
-  // ?mock=1 默认模拟已登录管理员,放开 /api/admin/*,ThemeManage 才可在 dev 正常保存。显式 ?admin=0 模拟未授权。
-  const adminMode = new URLSearchParams(window.location.search).get("admin") !== "0";
-  // 保存后的主题设置驻留内存与本地存储，让「保存 → /api/public refetch」以及刷新页面闭环。
-  const defaultTheme = "SAO";
-  const MOCK_STORAGE_KEY = "komari_mock_theme_settings";
-  const defaultMockThemeSettings: Record<string, unknown> = {
-    desktopNodeViewMode: "compact",
-    mobileNodeViewMode: "compact",
-    clusterOverviewMode: "classic",
-    showHomeOverview: true,
-    showGroupTabs: true,
-    showRegionBar: true,
-    showCardGroup: true,
-    enableHomeSort: true,
-    showTrafficPageButton: true,
-    showTrafficPageForGuests: false,
-    showCostSummary: true,
-    showCostSummaryFloatingButton: true,
-    showPriceForGuests: false,
-    showOverviewRatings: true,
-    showBandwidthRating: true,
-    showPingChart: true,
-    // 单任务刻意和三网首项不同，便于回归验证列表没有误读全局三网数据。
-    homepagePingBindings: { "2": nodes.map((node) => node.uuid) },
-    enableHomepageMultiPing:
-      new URLSearchParams(window.location.search).get("multiPing") === "1",
-    homepageMultiPingTaskIds: [1, 2, 3],
-  };
-
-  const savedThemeSettings: Record<string, Record<string, unknown>> = {};
-
-  const readPersistedSettings = (): Record<string, unknown> | null => {
-    try {
-      if (typeof window !== "undefined" && window.localStorage) {
-        const raw = window.localStorage.getItem(MOCK_STORAGE_KEY);
-        if (raw) return JSON.parse(raw) as Record<string, unknown>;
+        }
+        if (last <= first) throw 105;
+        const firstCounter = counters(node, first);
+        const lastCounter = counters(node, last);
+        const received = lastCounter.total_received - firstCounter.total_received;
+        const transmitted = lastCounter.total_transmitted - firstCounter.total_transmitted;
+        return {
+          uuid: node.uuid, start_time: start, end_time: end, received, transmitted,
+          interfaces: [{ interface_name: "eth0", received, transmitted, first_snapshot_time: first, last_snapshot_time: last }],
+          possible_data_losses: [],
+        };
       }
-    } catch {}
-    return null;
-  };
-
-  const writePersistedSettings = (settings: Record<string, unknown>) => {
-    try {
-      if (typeof window !== "undefined" && window.localStorage) {
-        window.localStorage.setItem(MOCK_STORAGE_KEY, JSON.stringify(settings));
-      }
-    } catch {}
-  };
-
-  const initialStored = readPersistedSettings();
-  if (initialStored) {
-    savedThemeSettings["SAO"] = initialStored;
-    savedThemeSettings["komari-theme-sao"] = initialStored;
+      default: throw -32601;
+    }
   }
 
-  window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-    const request = new Request(input, init);
-    const url = new URL(request.url, window.location.origin);
-
-    if (
-      url.hostname === "api.frankfurter.dev" ||
-      url.hostname === "open.er-api.com" ||
-      url.hostname === "api.exchangerate-api.com"
-    ) {
-      if (url.hostname === "api.frankfurter.dev") {
-        return json([
-          { base: "USD", quote: "CNY", rate: 7.18 },
-          { base: "USD", quote: "EUR", rate: 0.86 },
-          { base: "USD", quote: "JPY", rate: 146.4 },
-        ]);
+  return {
+    config,
+    fails(url: string) { return failed && new URL(url).hostname === "backup.nodeget-mock.invalid"; },
+    reply(url: string, request: RpcRequest) {
+      const source = sources.find(item => new URL(item.url).hostname === new URL(url).hostname);
+      try {
+        if (!source) throw -32601;
+        return { jsonrpc: "2.0", id: request.id, result: result(source, request.method ?? "", request.params ?? {}) };
+      } catch (error) {
+        const code = typeof error === "number" ? error : -32603;
+        return { jsonrpc: "2.0", id: request.id, error: { code, message: code === -32601 ? "Method not found" : "Development fixture error", ...(code > 0 ? { data: { error_id: code } } : {}) } };
       }
-      return json({
-        result: "success",
-        rates: {
-          USD: 1,
-          CNY: 7.18,
-          EUR: 0.86,
-          JPY: 146.4,
-          CAD: 1.38,
-          HKD: 7.82,
-          GBP: 0.76,
-        },
+    },
+  };
+}
+
+function json(data: unknown) {
+  return new Response(JSON.stringify(data), { headers: { "Content-Type": "application/json" } });
+}
+
+/** 仅由 main.tsx 的 DEV 分支动态加载；所有数据都经过正式 RPC/配置适配层。 */
+export function installDevMockApi() {
+  const nativeFetch = globalThis.fetch;
+  const nativeWebSocket = globalThis.WebSocket;
+  const mock = createNodeGetMock(getMockParameters(window.location));
+  const sockets = new Set<MockSocket>();
+
+  class MockSocket extends EventTarget {
+    static readonly CONNECTING = 0;
+    static readonly OPEN = 1;
+    static readonly CLOSING = 2;
+    static readonly CLOSED = 3;
+    readonly CONNECTING = 0;
+    readonly OPEN = 1;
+    readonly CLOSING = 2;
+    readonly CLOSED = 3;
+    readonly url: string;
+    readonly protocol = "";
+    readonly extensions = "";
+    bufferedAmount = 0;
+    binaryType: BinaryType = "blob";
+    readyState = 0;
+    onopen: ((event: Event) => void) | null = null;
+    onerror: ((event: Event) => void) | null = null;
+    onclose: ((event: CloseEvent) => void) | null = null;
+    onmessage: ((event: MessageEvent) => void) | null = null;
+
+    constructor(url: string | URL) {
+      super();
+      this.url = String(url);
+      sockets.add(this);
+      queueMicrotask(() => {
+        if (this.readyState !== 0) return;
+        if (mock.fails(this.url)) {
+          const event = new Event("error");
+          this.onerror?.(event);
+          this.dispatchEvent(event);
+          this.close(1006, "Mock source unavailable");
+        } else {
+          this.readyState = 1;
+          const event = new Event("open");
+          this.onopen?.(event);
+          this.dispatchEvent(event);
+        }
       });
     }
 
-    if (url.origin !== window.location.origin || !url.pathname.startsWith("/api/")) {
-      return nativeFetch(input, init);
-    }
-
-    if (url.pathname === "/api/me") {
-      return json(
-        adminMode
-          ? { logged_in: true, username: "mock-admin", uuid: "mock-admin-uuid" }
-          : { logged_in: false, username: "", uuid: "" },
-      );
-    }
-
-    if (url.pathname === "/api/admin/client/list") {
-      if (!adminMode) return json({ message: "unauthorized" }, { status: 401 });
-      return json(
-        nodes.map(({ uuid, name, group, region, weight }) => ({
-          uuid,
-          name,
-          group,
-          region,
-          weight,
-        })),
-      );
-    }
-
-    if (url.pathname === "/api/admin/ping") {
-      if (!adminMode) return json({ message: "unauthorized" }, { status: 401 });
-      return json(pingTasks);
-    }
-
-    if (url.pathname === "/api/admin/theme/settings") {
-      if (!adminMode) return json({ message: "unauthorized" }, { status: 401 });
-      const theme = url.searchParams.get("theme") ?? defaultTheme;
-      const body = (await request.json()) as Record<string, unknown>;
-      savedThemeSettings[theme] = body;
-      savedThemeSettings["SAO"] = body;
-      savedThemeSettings["komari-theme-sao"] = body;
-      writePersistedSettings(body);
-      return json({ status: "success" });
-    }
-
-    if (url.pathname === "/api/public") {
-      const theme = url.searchParams.get("theme") ?? defaultTheme;
-      const activeSaved =
-        savedThemeSettings[theme] ??
-        savedThemeSettings["SAO"] ??
-        savedThemeSettings["komari-theme-sao"] ??
-        readPersistedSettings();
-      return json({
-        sitename: "Komari SAO",
-        description: "全球节点运行状态",
-        theme: "SAO",
-        allow_cors: false,
-        disable_password_login: false,
-        oauth_enable: false,
-        private_site: false,
-        record_enabled: true,
-        record_preserve_time: 30,
-        ping_record_preserve_time: 30,
-        metric_retention_days: 90,
-        custom_head: "",
-        custom_body: "",
-        theme_settings: activeSaved
-          ? { ...defaultMockThemeSettings, ...activeSaved }
-          : defaultMockThemeSettings,
+    send(data: string | ArrayBufferLike | Blob | ArrayBufferView) {
+      if (this.readyState !== 1) throw new DOMException("Socket is not open", "InvalidStateError");
+      const request = JSON.parse(String(data)) as RpcRequest;
+      const reply = mock.reply(this.url, request);
+      queueMicrotask(() => {
+        if (this.readyState !== 1) return;
+        const event = new MessageEvent("message", { data: JSON.stringify(reply) });
+        this.onmessage?.(event);
+        this.dispatchEvent(event);
       });
     }
 
-    if (url.pathname === "/api/nodes") {
-      return json(nodes);
+    close(code = 1000, reason = "") {
+      if (this.readyState === 3) return;
+      this.readyState = 3;
+      sockets.delete(this);
+      const event = Object.assign(new Event("close"), { code, reason, wasClean: code === 1000 }) as CloseEvent;
+      this.onclose?.(event);
+      this.dispatchEvent(event);
     }
+  }
 
-    if (url.pathname === "/api/rpc2") {
-      const payload = (await request.json()) as {
-        id?: number | string;
-        method?: string;
-        params?: {
-          uuid?: string;
-          type?: string;
-          task_id?: number;
-          hours?: number;
-          metric_keys?: string[];
-          entity_ids?: string[];
-          tags?: { task_id?: string };
-          start?: string;
-          end?: string;
-        };
-      };
-      const reply = (result: unknown) => json({ jsonrpc: "2.0", id: payload.id, result });
-      const methodNotFound = () =>
-        json({
-          jsonrpc: "2.0",
-          id: payload.id,
-          error: { code: -32601, message: `Method not found: ${payload.method}` },
-        });
-
-      switch (payload.method) {
-        case "public:queryMetrics": {
-          // 各类 metric key 都要有响应:任何一类返回 Method not found 都会置位全局
-          // 降级标志,把其余 metrics 路径一并拖下水(dev 与真实后端行为背离)。
-          const metricKeys = payload.params?.metric_keys ?? [];
-          if (metricKeys.some((key) => key.startsWith("ping."))) {
-            return reply(pingMetricPayload(payload.params ?? {}));
-          }
-          if (metricKeys.some((key) => key === "traffic.up" || key === "traffic.down")) {
-            return reply(trafficMetricPayload(payload.params ?? {}));
-          }
-          return reply(loadMetricPayload(payload.params ?? {}));
-        }
-        case "public:getPingMetricStats":
-          // 统计接口不实现:api.ts 对它单独 catch 后会用 records 本地计算,足够 dev 用。
-          return methodNotFound();
-        case "public:getPublicPingTasks":
-          return reply(pingTasks);
-        case "common:getNodes":
-          return reply(Object.fromEntries(nodes.map((node) => [node.uuid, node])));
-        case "common:getNodesLatestStatus":
-          return reply(latestStatus());
-        case "common:getRecords": {
-          const isPing = payload.params?.type === "ping";
-          const records = isPing
-            ? pingRecords(payload.params?.uuid, payload.params?.task_id)
-            : loadRecords(payload.params?.uuid ?? nodes[0].uuid);
-          return reply({ count: records.length, records, tasks: isPing ? pingTasks : [] });
-        }
-        default:
-          // 未实现的方法返回标准错误,与真实后端一致——空对象伪装成功会让 dev 测不出接口缺失。
-          return methodNotFound();
-      }
-    }
-
-    return json({ message: `No mock for ${url.pathname}` }, { status: 404 });
+  globalThis.WebSocket = MockSocket as unknown as typeof WebSocket;
+  const mockFetch: typeof fetch = async (input, init) => {
+    const raw = input instanceof Request ? input.url : String(input);
+    const url = new URL(raw, window.location.href);
+    if (init?.signal?.aborted) throw init.signal.reason;
+    if (url.origin === window.location.origin && url.pathname.endsWith("/config.json")) return json(mock.config);
+    if (url.hostname === "api.frankfurter.dev") return json([
+      { base: "USD", quote: "CNY", rate: 7.18 }, { base: "USD", quote: "EUR", rate: 0.86 }, { base: "USD", quote: "JPY", rate: 146.4 },
+    ]);
+    if (["open.er-api.com", "api.exchangerate-api.com"].includes(url.hostname)) return json({ result: "success", rates: { USD: 1, CNY: 7.18, EUR: 0.86, JPY: 146.4, CAD: 1.38, HKD: 7.82, GBP: 0.76 } });
+    return nativeFetch(input, init);
+  };
+  globalThis.fetch = mockFetch;
+  window.fetch = mockFetch;
+  return () => {
+    for (const socket of [...sockets]) socket.close();
+    globalThis.fetch = nativeFetch;
+    window.fetch = nativeFetch;
+    globalThis.WebSocket = nativeWebSocket;
   };
 }

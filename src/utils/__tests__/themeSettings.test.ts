@@ -57,15 +57,6 @@ describe("normalizeThemeSettings", () => {
     expect(normalizeThemeSettings({ homeSortField: "nope" } as never).homeSortField).toBe("default");
   });
 
-  it("keeps fake ping off unless explicitly enabled", () => {
-    expect(normalizeThemeSettings({}).fakePingForUnbound).toBe(false);
-    expect(normalizeThemeSettings({ fakePingForUnbound: true }).fakePingForUnbound).toBe(true);
-    // 非布尔真值不算显式开启。
-    expect(
-      normalizeThemeSettings({ fakePingForUnbound: "yes" } as never).fakePingForUnbound,
-    ).toBe(false);
-  });
-
   it("defaults showPriceForGuests to false unless explicitly enabled", () => {
     expect(normalizeThemeSettings({}).showPriceForGuests).toBe(false);
     expect(normalizeThemeSettings({ showPriceForGuests: true }).showPriceForGuests).toBe(true);

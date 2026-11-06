@@ -16,15 +16,13 @@ import {
 import type { MatrixColorTheme, MatrixBootEffect } from "@/utils/themeSettings";
 
 export interface MatrixPatternEditorProps {
-  /** 全站当前生效的点阵图案 */
+  /** 当前浏览器生效的点阵图案 */
   value: number[] | null | undefined;
-  /** 云端保存的用户自定义预设列表（跨设备漫游） */
+  /** 主题设置中的用户自定义预设列表（浏览器本地保存） */
   userPresets?: UserMatrixPreset[];
-  /** 兼容旧版 onChange（可选） */
-  onChange?: (pattern: number[] | null) => void;
-  /** 点击「应用到首页」时触发（精准 1 次同步到云端） */
+  /** 点击「应用到首页」时触发，保存到当前浏览器 */
   onApply?: (pattern: number[] | null) => void;
-  /** 保存或删除用户预设时触发（精准 1 次同步到云端） */
+  /** 保存或删除用户预设时触发，保存到当前浏览器 */
   onSaveUserPresets?: (presets: UserMatrixPreset[]) => void;
   colorTheme?: MatrixColorTheme;
   bootEffect?: MatrixBootEffect;
@@ -33,13 +31,12 @@ export interface MatrixPatternEditorProps {
 export function MatrixPatternEditor({
   value,
   userPresets: externalUserPresets,
-  onChange,
   onApply,
   onSaveUserPresets,
   colorTheme = "default",
   bootEffect = "laser-scan",
 }: MatrixPatternEditorProps) {
-  // 当前画板像素点亮集合（纯本地草稿状态，绘制过程绝不自动向云端发请求）
+  // 当前画板像素点亮集合（草稿状态，点击应用后才生效）
   const [pixels, setPixels] = useState<Set<number>>(() => getPatternPixelSet(value));
 
   // 动画预览状态
@@ -48,7 +45,7 @@ export function MatrixPatternEditor({
   const [previewPhase, setPreviewPhase] = useState<"idle" | "scan" | "hold">("idle");
   const previewTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // 用户自定义预设列表：优先使用外部传入的云端预设，否则回退使用本地 localStorage
+  // 用户自定义预设列表：优先使用主题设置中的预设，否则读取本地 localStorage
   const [localPresets, setLocalPresets] = useState<UserMatrixPreset[]>(() =>
     loadUserMatrixPresets(),
   );
@@ -72,7 +69,7 @@ export function MatrixPatternEditor({
     };
   }, []);
 
-  // 计算当前画板是否与全站当前生效值存在差异（未应用改动）
+  // 计算当前画板是否与当前生效值存在差异（未应用改动）
   const externalPatternSet = useMemo(() => getPatternPixelSet(value), [value]);
   const hasUnappliedChanges = useMemo(() => {
     if (pixels.size !== externalPatternSet.size) return true;
@@ -108,7 +105,7 @@ export function MatrixPatternEditor({
     setPixels(new Set<number>());
   };
 
-  // 点击「应用到首页」：明确触发一次提交并同步到云端
+  // 点击「应用到首页」：触发一次本地保存
   const handleApplyToSite = () => {
     if (isPreviewing) return;
     const defaultSet = new Set(DEFAULT_PATTERN);
@@ -117,14 +114,10 @@ export function MatrixPatternEditor({
       Array.from(pixels).every((idx) => defaultSet.has(idx));
 
     const finalPattern = isDefault ? null : Array.from(pixels).sort((a, b) => a - b);
-    if (onApply) {
-      onApply(finalPattern);
-    } else if (onChange) {
-      onChange(finalPattern);
-    }
+    onApply?.(finalPattern);
   };
 
-  // 保存当前画布设计为用户预设（触发 1 次云端同步）
+  // 保存当前画布设计为用户预设（保存到当前浏览器）
   const handleSaveUserPreset = () => {
     if (activePresets.length >= MAX_USER_PRESETS) {
       window.alert(`最多保存 ${MAX_USER_PRESETS} 个自定义预设，请先删除不需要的预设。`);
@@ -148,7 +141,7 @@ export function MatrixPatternEditor({
     onSaveUserPresets?.(nextPresets);
   };
 
-  // 删除指定的自定义预设（触发 1 次云端同步）
+  // 删除指定的本地自定义预设
   const handleDeleteUserPreset = (id: string, name: string) => {
     if (!window.confirm(`确定删除用户预设「${name}」吗？`)) return;
     const nextPresets = activePresets.filter((p) => p.id !== id);
@@ -302,7 +295,7 @@ export function MatrixPatternEditor({
             }`}
             title={
               hasUnappliedChanges
-                ? "当前画板有未应用的改动，点击应用到首页并同步云端"
+                ? "当前画板有未应用的改动，点击应用到首页并保存到当前浏览器"
                 : "当前画板设计与首页一致"
             }
           >
@@ -362,7 +355,7 @@ export function MatrixPatternEditor({
         })}
       </div>
 
-      {/* 用户自定义预设快捷选用（云端漫游，跨设备不丢） */}
+      {/* 用户自定义预设快捷选用（可随主题设置导入导出） */}
       <div className="mt-2 pt-2 border-t border-(--hairline)/40 flex flex-wrap items-center gap-1.5">
         <span className="text-[10px] text-(--text-muted) mr-0.5">用户预设:</span>
         <button
@@ -370,7 +363,7 @@ export function MatrixPatternEditor({
           onClick={handleSaveUserPreset}
           disabled={isPreviewing}
           className="mao-preset-chip is-add flex items-center gap-0.5"
-          title="将当前画布设计保存为用户预设（保存至云端，跨设备不丢）"
+          title="将当前画布设计保存为用户预设（保存在当前浏览器）"
         >
           <Plus size={11} />
           <span>存为预设</span>
@@ -412,7 +405,7 @@ export function MatrixPatternEditor({
                       }
                     }}
                     className="inline-flex items-center justify-center w-3 h-3 rounded-full hover:bg-red-500/20 hover:text-red-500 transition-colors text-[10px] leading-none"
-                    title="从云端删除此预设"
+                    title="从当前浏览器删除此预设"
                   >
                     <X size={9} />
                   </span>

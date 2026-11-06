@@ -82,8 +82,7 @@ const TIME_RANGE_OPTIONS: TimeRangeOption[] = [
   { label: "30 天", value: 720 },
 ];
 
-// Ping 详情只保留高分辨率仍有观察价值的四档。metric store 虽可保留更久，
-// 但 30/90 天会退化到小时级 rollup，不再放进详情页快捷范围。
+// Ping 详情保留至 7 天的快捷窗口，兼顾线路趋势查看与浏览器查询开销。
 const PING_TIME_RANGE_OPTIONS: TimeRangeOption[] = TIME_RANGE_OPTIONS.filter(
   (option) => option.value <= 168,
 );

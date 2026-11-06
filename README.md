@@ -1,177 +1,141 @@
-<p align="center">
-  <strong>面向多种探针服务端的 SAO 系列仪表盘主题</strong>
-</p>
+# NodeGet-Theme-SAO
 
-<p align="center">
-  <a href="https://github.com/WAOR/Komari-Theme-SAO">🌸 Komari 端</a> &nbsp;|&nbsp; 
-  <a href="https://github.com/WAOR/CFSM-SAO">☁️ CFSM 端</a> &nbsp;|&nbsp; 
-  <a href="https://github.com/WAOR/Monitor-SAO">⚡ 极简探针端</a>
-</p>
+面向 **NodeGet v0.6.0 与当前 v0.6.1 beta** 的原生 SAO 风格公开监控主题。通过 NodeGet WebSocket RPC 读取节点、任务与流量，提供卡片、方格矩阵、波形看板、浅色/深色模式、配色和点阵编辑器。
 
-<p align="center">
-  <img src="https://img.shields.io/badge/license-MIT-blue" alt="License">
-  <img src="https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen" alt="Node Version">
-  <img src="https://img.shields.io/badge/TypeScript-Strict-blue" alt="TypeScript">
-</p>
+![主题预览](./preview.png)
 
-<p align="center">
-  <img src="./preview.png" alt="Theme Preview" width="100%">
-</p>
+## 功能
 
----
+- 首页多种节点卡片、搜索、分组、排序和多主控筛选。
+- 节点详情、实时资源使用率、历史负载与网络曲线。
+- 自动发现 NodeGet Ping/TCPing 任务，显示真实延迟与丢包；支持指定首页任务。
+- 今日流量、周期流量、节点费用与到期提醒；费用默认不公开。
+- SAO / EVA / 命运石之门配色，开屏动效、点阵预设和自定义颜色。
+- 主题编辑器在当前浏览器自动保存，支持导入、导出完整配置和恢复站点设置。
+- NodeGet 标准 ZIP 与独立静态部署；主题中不包含服务器管理、后台跳转或管理员登录入口。
 
-## ⚡ 核心功能与工业美学
+多主控节点按“主控身份＋节点 UUID”区分。同一台服务器同时上报两个主控时，会显示两条记录，并分别参与总览和费用统计；主题不自动把它们合并为备用来源。建议为每个连接设置固定且唯一的 `id`，修改显示名称或调整连接顺序时保留这个 `id`。
 
-### 🚀 极致性能与首屏架构
-* **数据并行预取**：HTML `<head>` 阶段提前并行请求，彻底消除单页应用串行阻塞；
-* **立体骨架秒级占位**：真实数据抵达前渲染同构呼吸骨架屏，拒绝空白等待；
-* **按需分包异步加载**：轻量核心骨架，重型图表库按需懒加载，严格控制首屏体积。
+## 安装
 
----
+### NodeGet 后台安装
 
-### 🎮 集群看板双形态自由切换
-支持在主题管理中根据集群规模与偏好自由切换看板呈现形态：
+1. 从本仓库 [Releases](https://github.com/GarlandQian/NodeGet-Theme-SAO/releases) 下载主题 ZIP；没有可用发布包时，按下文自行构建。
+2. 在 NodeGet 控制面板的主题管理中，从本地压缩包安装。
+3. 展开已安装的 SAO 主题，进入 **Token 授权**，点击一个主控预设，或用“添加空白”填写名称、后端 URL 和公开只读 Token，然后点击 **确定**。
+4. 打开主题页面；如果页面已经打开，点击“已保存授权，重新读取”。
 
-#### 🔲 「方格矩阵」大集群全景模式
-专为大规模节点打造的高密度俯瞰热力看板：
-* **20 列整屏机架热力**：突破单行进度条限制，单屏容纳上百台机器，溢出无缝垂直滚动；
-* **实时吞吐动态梯级变色**：单机方格根据实时吞吐（空闲待机 / 活跃传输 / 高吞吐）呈现动态色彩梯级与呼吸流光；
-* **硬核机能主题配色**：内置「经典标准」（绿·橙·红常规监控色阶）与「EVA 初号机」（机体紫·荧光绿·暴走红）专属配色方案，更多个性化配色将随版本持续扩充；
-* **微型点阵画板与开场预设**：配备 20×5 微型像素 DIY 画板，内置 `SAO`、`EVA`、`PING`、`OPS`、`FAST`、`〰️ 心电脉冲`、`🕹️ 吃豆人`、`❤️ 爱心`、`404` 等丰富常用预设，支持一键载入、开屏激光扫光点亮，并支持用户自定义绘制开场图案跨设备漫游同步；
-* **开屏激光扫光动效**：进入站点时激光束横扫点亮点阵专属文字，呼吸聚能后平滑切入实时集群数据；
-* **闲置机位灵动呼吸填充**：可选开启闲置插槽模拟数据，周期性随机变幻速率，保持整屏矩阵饱满生动。
+**安装 ZIP 不会自动授权读取当前主控。** “用户配置”只管理主题偏好，“Token 授权”才会保存 `config.json.site_tokens`。若提示“尚未添加主控授权”，先检查该主题的 Token 授权列表是否为空、是否点了“确定”；不需要把 Token 发给主题作者或提交到 GitHub。官方操作由 [NodeGet 主题详情中的 Token 授权](https://github.com/NodeSeekDev/NodeGet-board/blob/main/src/components/theme-management/ThemeDetail.vue) 提供。
 
-#### 〰️ 「经典波形」健康看板模式
-专为精细化网络吞吐波动观察打造：
-* **双轨原生 SVG 吞吐波形**：轻量级贝塞尔实时曲线，内置自适应标尺算法，流畅呈现瞬时网络脉冲；
-* **分段式在线健康指示格**：单机一格映射存活状态，全站在线率一目了然；
-* **状态呼吸胶囊与带宽评级**：根据全站瞬时吞吐动态映射等级徽章与联动呼吸流光。
+ZIP 根目录直接包含 `index.html`、`assets/`、`nodeget-theme.json`、`nodeget-theme-files.json`、`config.json`、`custom.css`、`custom.js` 和预览图，不额外套一层 `dist/`。
 
----
+### 独立静态部署
 
-### 🎨 运维细节与设计质感
-* **中性碳黑与护眼浅灰**：纯正中性深色底色，消除泛蓝疲劳感；浅色模式降低视觉眩光；
-* **资产数据一键防窥**：敏感节点费用与资产总值默认隐藏，支持顶栏快捷键一键安全截图分享；
-* **iOS 灵动岛全景融入**：安全区色彩自然漫延至状态栏与灵动岛背后，彻底消除顶部色彩断层。
+解压主题 ZIP，编辑 `config.json`，再把全部文件部署到 nginx、Cloudflare Pages、GitHub Pages 等静态托管服务。也可关联本仓库，使用以下构建配置：
 
----
+| 配置项 | 值 |
+| --- | --- |
+| Node.js | 22.12 或更新版本 |
+| 安装命令 | `npm ci` |
+| 构建命令 | `npm run build` |
+| 输出目录 | `dist` |
+| 环境变量 | `NODEGET_CONFIG`，值为完整 JSON 配置 |
 
-### 🏷️ 节点高级彩色标签定制 (Radix Colors)
-各探针原生支持的色彩非常有限。SAO 主题在前端层面全量引入并支持了完整的 [Radix UI Colors](https://www.radix-ui.com/themes/docs/theme/color) 调色板，可在后台为线路或节点自由指定丰富的高定专属色彩：
+`NODEGET_CONFIG` 在构建时生成 `dist/config.json`，改动环境变量后需要重新构建。它不注入 JavaScript bundle。使用子路径部署时保留整个文件结构；页面采用 Hash 路由，例如 `/monitor/#/instance/...`，无需服务端 SPA rewrite。
 
-* **🌸 Komari 端指定语法**：在后台节点标签中填写 `标签名<颜色>`，多标签用分号 `;` 分隔：
-  ```text
-  CN2GIA<Blue>;9929<Tomato>;CMIN2<Grass>;精品网<Amber>
-  ```
-* **☁️ CFSM 端指定语法**：在后台节点备注中填写 `标签名-颜色`，多标签用英文逗号 `,` 分隔：
-  ```text
-  CN2GIA-Blue,9929-Tomato,CMIN2-Grass,精品网-Amber
-  ```
-* **⚡ 极简探针端说明**：因当前极简探针官方服务端尚未提供节点标签（Tags）字段，该功能暂处于冻结等待期，待服务端后续开放后主题将第一时间跟进适配。
-* **支持的色彩池**：全量支持 Radix UI 规范色彩名（不区分大小写）：
-  > `Tomato` · `Red` · `Ruby` · `Crimson` · `Pink` · `Plum` · `Purple` · `Violet` · `Iris` · `Indigo` · `Blue` · `Cyan` · `Teal` · `Jade` · `Green` · `Grass` · `Lime` · `Mint` · `Sky` · `Amber` · `Yellow` · `Orange` · `Gold` · `Bronze` 等。若未手动指定颜色，主题将基于关键词自动匹配适宜色系。
+作为公开主题分发站时，部署不含真实连接的默认构建，并允许跨域读取静态文件。仓库提供适用于 Cloudflare Pages 的 `_headers`；其他托管服务请设置相应 CORS 头。NodeGet 控制面板可以从分发站 URL 导入主题。`nodeget-theme.json` 中的 `dist_page` 暂留空，可在确定自己的分发域名后填写。本仓库不预设已上线的分发站。
 
----
+## 站点配置
 
-## 📸 视觉效果预览
-
-### 🖥️ 桌面端集群全景 (Desktop)
-| 浅色模式（EVA 初号机配色） | 深色模式（EVA 初号机配色） |
-| :---: | :---: |
-| <img src="./docs/images/matrix-light.png" alt="浅色模式 EVA 配色" width="100%" /> | <img src="./docs/images/matrix-dark.png" alt="深色模式 EVA 配色" width="100%" /> |
-| **开屏激光扫光与点阵文字** | **主题管理：微型点阵画板与矩阵设置** |
-| <img src="./docs/images/matrix-opening.png" alt="开屏扫光动效" width="100%" /> | <img src="./docs/images/theme-manage.png" alt="主题设置与点阵画板" width="100%" /> |
-
-| **⏳ 命运石之门 (Steins;Gate) 配色方案 · 赛博故障 (Cyber Glitch) 开屏动效** |
-| :---: |
-| <img src="./docs/images/Steins;Gate+Cyber Glitch.gif" alt="Steins;Gate 配色方案与 Cyber Glitch 动效" width="100%" /> |
-
-### 📱 移动端窄屏精细适配 (Mobile)
-| 移动端深色矩阵全貌 | 移动端开屏点阵动效 | 移动端主题管理与点阵画板 |
-| :---: | :---: | :---: |
-| <img src="./docs/images/matrix-mobile-dark.png" alt="移动端深色矩阵全貌" width="100%" /> | <img src="./docs/images/matrix-mobile-diy.png" alt="移动端开屏点阵动效" width="100%" /> | <img src="./docs/images/matrix-mobile-settings.png" alt="移动端主题管理与点阵画板" width="100%" /> |
-
----
-
-## 🧩 多端特性对比矩阵
-
-| 核心特性 / 维度 | 🌸 Komari 端 | ☁️ CFSM 端 | ⚡ 极简探针端 |
-| :--- | :---: | :---: | :---: |
-| **方格矩阵看板** | ✅ 支持 | ✅ 支持 | ✅ 支持 |
-| **经典波形健康看板** | ✅ 支持 | ✅ 支持 | ✅ 支持 |
-| **首页指标小卡自由定制** | ✅ 11 种指标池 · 6 槽自由拖拽/点选 | ✅ 11 种指标池 · 6 槽自由拖拽/点选 | ✅ 11 种指标池 · 6 槽自由拖拽/点选 |
-| **主题配色方案** | ✅ 经典标准 / EVA 初号机 / 命运石之门 | ✅ 经典标准 / EVA 初号机 / 命运石之门 | ✅ 经典标准 / EVA 初号机 / 命运石之门 |
-| **开屏扫光 & 点阵画板** | ✅ 支持 | ✅ 支持 | ✅ 支持 |
-| **深浅双色体系** | ✅ 中性碳黑 | ✅ 中性碳黑 | ✅ 中性碳黑 |
-| **全息微胶囊底栏 & 版本感知** | ✅ 静默更新检测 · 动态版本翻滚 | ✅ 静默更新检测 · 动态版本翻滚 | ✅ 静默更新检测 · 动态版本翻滚 |
-| **集群地区标签展示** | ✅ 地理优先级 · 自动循环滚动展示 | ✅ 地理优先级 · 自动循环滚动展示 | ✅ 地理优先级 · 自动循环滚动展示 |
-| **光柱与评级自定义** | ✅ 流量 18 色谱 / 延迟 / 丢包门槛随心调 | ✅ 流量 18 色谱 / 延迟 / 丢包门槛随心调 | ✅ 流量 18 色谱 / 延迟 / 丢包门槛随心调 |
-| **设置保存机制** | ⚡ 实时自动保存 (随改随存) | ⚡ 实时自动保存 (随改随存) | ⚡ 实时自动保存 (随改随存) |
-| **资产与费用隐蔽保护** | ✅ 支持 | ✅ 支持 | ✅ 支持 |
-| **三端反馈联动专区** | ✅ 自动识别环境 · 一键直达反馈 | ✅ 自动识别环境 · 一键直达反馈 | ✅ 自动识别环境 · 一键直达反馈 |
-| **节点标签系统** | 🏷️ 支持指定 Radix 色彩 (`标签<颜色>`) | 🏷️ 支持指定 Radix 色彩 (`标签-颜色`) | ⏳ 待后端开放接口 |
-| **部署方式** | 主题商店搜索一键安装 / 上传 ZIP | 主题商店搜索一键启用 / 仓库地址安装 | 填入仓库地址一键安装 / 上传压缩包 |
-| **项目地址** | [Komari-Theme-SAO](https://github.com/WAOR/Komari-Theme-SAO) | [CFSM-SAO](https://github.com/WAOR/CFSM-SAO) | [Monitor-SAO](https://github.com/WAOR/Monitor-SAO) |
-
----
-
-## 🏷️ 多端版本号规范与维护机制
-
-**SAO 探针主题家族**目前涵盖 [Komari-Theme-SAO](https://github.com/WAOR/Komari-Theme-SAO)、[CFSM-SAO](https://github.com/WAOR/CFSM-SAO) 与 [Monitor-SAO](https://github.com/WAOR/Monitor-SAO) 三个版本。为兼顾**跨端核心功能演进的一致性**与**单一探针平台差异化适配的灵活性**，三端主题版本号遵循以下维护约定：
-
-```text
-v 主版本 . 次版本 . 修订版本  (规范格式: vX.Y.Z)
-   │        │        │
-   │        │        └── 单端专属补丁/小修小补（Patch，各端按需独立递增，不追求一致）
-   └────────┴─────────── 跨端核心功能与架构重塑（Major.Minor，三端严格对齐）
+```json
+{
+  "user_preferences": {
+    "site_name": "我的节点监控",
+    "site_logo": "",
+    "footer": "Powered by NodeGet · SAO",
+    "theme_settings": {
+      "showPriceForGuests": false
+    }
+  },
+  "site_tokens": [
+    {
+      "id": "primary",
+      "name": "主控一",
+      "backend_url": "wss://your-backend.example.com/nodeget/rpc",
+      "token": "YOUR_PUBLIC_READ_ONLY_TOKEN"
+    }
+  ]
+}
 ```
 
-- **前两位（`X.Y` - 主版本与功能代际）**：代表跨端通用的新功能、重大特性与架构重塑（如全新主题配色、动效升级、自定义光柱、设置后台重构等）。三端主题在此层级保持**严格对齐**，确保多平台用户享有相同的功能体验与视觉质感。
-- **末位（`Z` - 单端修订补丁）**：代表针对特定探针后端的专属修复、接口兼容与小修小补。
-  - 由于各探针服务端（Komari、CFSM、极简探针）的底层技术栈、接口规范与更新节奏各不相同，当某一端需要单独修复平台缺陷或优化特定机制时，仅独立递增该端的末位补丁号；
-  - 其他未受影响的端保持既有稳定版本，**日常维护期各端末尾修订号不追求刻意对齐**；
-  - **跨端汇合机制**：当后续推出跨端通用的新特性、迭代至下一个功能代际（如递增次版本号进入新的 `X.(Y+1).0`）时，三端版本号将再次同步对齐，末位补丁号归零。
+`backend_url` 使用自己服务端实际的 WebSocket RPC 地址。每个 `site_tokens` 条目对应一个主控；新增条目即可聚合其他主控。
 
----
+`config.json` 会被访客浏览器读取。这里只能配置有意提供给公开页面、限制了节点及字段范围的只读 Token，不能放入 Super Token 或写入凭据。授予需要展示的节点、监控数据、`metadata_*`、Ping/TCPing 任务及流量读取权限即可。隐藏按钮或关闭费用展示不能替代服务端权限限制。
 
-## 🚀 安装与部署
+费用默认关闭。站长在部署配置的 `user_preferences.theme_settings.showPriceForGuests` 中设置 `true` 后，费用与资产页面才向访客开放。浏览器本地的个性化设置不能越过站点开关；截图防窥仅隐藏当前屏幕上的金额，不提供管理员专属查看权限。
 
-SAO 主题已上架三端各自的主题生态，均提供便捷的一键安装或离线部署支持：
+### 编辑与应用主题设置
 
-### 🌸 Komari 端
-* **方式一：主题商店一键安装（推荐）**  
-  进入 Komari 管理后台「主题商店」，搜索 **SAO** 点击安装并启用。
-* **方式二：手动上传安装包**  
-  前往 [Komari-Theme-SAO Releases](https://github.com/WAOR/Komari-Theme-SAO/releases) 下载主题压缩包，在后台主题管理中上传启用。
+1. 在主题中打开“主题设置”，调整布局、配色、点阵或任务绑定，改动会保存到当前浏览器。
+2. 导出 `user_preferences` 配置。导出文件不包含 `site_tokens` 或 Token。
+3. 在 NodeGet 后台主题配置的完整 JSON 编辑器中应用导出的偏好；若直接编辑 `config.json`，替换其中的 `user_preferences`，保留自己的 `site_tokens`。
+4. 独立静态托管也可更新 `NODEGET_CONFIG` 的 `user_preferences` 后重新构建部署。
 
-### ⚡ 极简探针端 (Monitor-Probe)
-* **方式一：仓库地址一键安装（推荐）**  
-  在极简探针管理后台「主题设置」页面，复制填入极简探针主题仓库地址 `https://github.com/WAOR/Monitor-SAO` 即可一键拉取安装。
-* **方式二：手动上传安装包**  
-  前往 [Monitor-SAO Releases](https://github.com/WAOR/Monitor-SAO/releases) 下载最新打包产物 `theme.tar.gz`，在后台主题设置页面上传启用。
+更换浏览器或设备不会自动同步本地编辑。全站配置应用后，其他访客才会读取到新设置；已有本地覆盖的浏览器可使用“恢复站点设置”清除覆盖。
 
-### ☁️ CFSM 端 (CF-Server-Monitor)
-* **方式一：主题商店一键启用（推荐）**  
-  登录 CFSM 后台前往「主题商店」，搜索 **SAO** 主题点击启用即可。
-* **方式二：手动添加仓库地址（锁定特定版本）**  
-  在「主题商店」中填入自定义地址安装：
-  - 追踪最新发布版：`https://github.com/WAOR/CFSM-SAO/tree/dist`
-  - 锁定特定 Commit：`https://github.com/WAOR/CFSM-SAO/tree/<40位CommitSHA>`
+主题刻意不声明简化的 `user_preferences_form`，以便 NodeGet 后台使用完整 JSON 编辑器。这样能保留点阵预设、Ping 绑定、颜色对象等复杂字段，避免简化表单保存时丢弃未知配置。
 
----
+## 数据与版本差异
 
-## 💖 致谢
+- 支持正式版 v0.6.0 的流量接口与当前 v0.6.1 beta 拆分后的接口，通过能力识别适配；不维护 v0.5.x。
+- 费用、到期日、标签和分组来自 NodeGet 节点元数据，没有配置时显示缺失状态。
+- Ping/TCPing 直接读取 NodeGet 已有任务及执行记录。首页默认自动选择节点的可用任务，无需先在主题中绑定；也可在主题设置中指定任务。没有任务、没有样本或读取权限不足时分别提示，主题不创建任务、不生成模拟延迟或丢包。
+- 历史周期流量依赖 NodeGet 的流量快照。按官方流程安装并运行 `traffic-snapshot-worker`；快照不足、数据缺口或权限不足时，主题会显示原因，不把它们当作零流量。
+- 主控连接失败、无权限或数据未配置时，其他主控和不受影响的功能继续工作；汇总不完整时会提示。
 
-感谢以下优秀开源项目与社区贡献者的付出：
-* **[stqfdyr/komari-theme-Lumina](https://github.com/stqfdyr/komari-theme-Lumina)**：初代优雅主题开创者。
-* **[shanyang242/Komari-Theme-LuminaPlus](https://github.com/shanyang242/Komari-Theme-LuminaPlus)**：出色的功能增强分支与架构设计。
-* **[volcano-1025/CFSM-Theme-LuminaPlus](https://github.com/volcano-1025/CFSM-Theme-LuminaPlus)**：CFSM 平台的早期移植探索。
-* **[guboysky/LuminaPlus](https://github.com/guboysky/LuminaPlus)**：Monitor 探针平台的移植尝试。
-* **[Montia37/komari-theme-purcarte](https://github.com/Montia37/komari-theme-purcarte)**：动态背景视频的设计与参考素材。
-* **[komari-monitor/komari](https://github.com/komari-monitor/komari)**、**[huilang-me/CF-Server-Monitor](https://github.com/huilang-me/CF-Server-Monitor/)** 与 **[monitor-probe/monitor](https://github.com/monitor-probe/monitor)**：探针监控服务端的作者及社区维护者。
+官方资料：[主题开发](https://nodeget.com/dev/theme/)、[主题安装](https://nodeget.com/guide/theme/quick-install)、[流量统计](https://nodeget.com/guide/features/traffic)、[节点元数据约定](https://nodeget.com/api/kv/special)、[版本变更](https://github.com/NodeSeekDev/NodeGet/releases)。
 
----
+## 本地开发与打包
 
-## 📄 开源许可证
+```bash
+npm ci
+cp .env.example .env.local
+npm run dev
+```
 
-SAO 系列主题基于 [MIT License](LICENSE) 开源发布。
+在 `.env.local` 中填写 `NODEGET_CONFIG`。开发服务器通过 `/config.json` 响应提供配置；文件已被 Git 忽略。没有后端时可使用开发模式的 `?mock=1` 预览，`?mock=0` 退出。
+
+```bash
+npm run build
+npm run package
+```
+
+`npm run build` 完成类型检查、Vite 构建、配置与主题元信息生成。`npm run package` 生成仓库根目录的 `NodeGet-Theme-SAO-v1.3.6.zip`。版本以 `package.json` 为准；更新版本时同步根目录 manifest。
+
+**分发 ZIP 始终使用空 `site_tokens` 模板**，即使本次构建设置了 `NODEGET_CONFIG`。实际站点配置只保留在 `dist/config.json` 中；直接发布 `dist/` 前应确认它是个人站点还是公开分发站。
+
+现有检查命令：
+
+```bash
+npm run lint
+npm test
+npm run typecheck
+```
+
+自定义 CSS / JS 可放在 `custom.css` 和 `custom.js`，更新主题前请备份这些文件及站点配置。
+
+## 使用 GitHub Actions 发布 Release
+
+工作流文件进入仓库默认分支后，在 **Actions → Release NodeGet theme → Run workflow** 中选择要发布的分支并运行。GitHub 要求手动工作流先存在于默认分支，详见 [手动运行工作流](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow)。
+
+发布前同步 `package.json`、`package-lock.json`（顶层及 `packages[""].version`）和 `nodeget-theme.json` 的版本号。工作流会执行 Lint、测试、构建和 ZIP 校验，再为实际构建的 commit 创建 `v<version>` 标签和 Release，上传主题 ZIP、预览图及 `SHA256SUMS`。使用仓库内置 `GITHUB_TOKEN`，无需配置个人 Token。
+
+也可以推送与版本号一致的 `v*` 标签触发发布。带 `-beta.1` 等后缀的版本会标记为预发布；已有 Release 不会被覆盖，已有标签也不会被移到另一个 commit。每次新发布请使用新版本号。
+
+发布说明可写在 `.github/release-notes/v<version>.md`，否则使用默认安装说明。安装时下载 **Releases 附件中的 `NodeGet-Theme-SAO-v<version>.zip`**；Actions Artifact 的外层压缩包还包含预览图和校验和，不能直接当作主题安装。
+
+## 来源与许可证
+
+保留上游 [MIT License](./LICENSE) 及作者版权。原 SAO 主题由 **WAOR** 开发，本仓库由 **GarlandQian** 适配 NodeGet。
+
+感谢 [SAO 原作及其社区贡献者](https://github.com/WAOR/Komari-Theme-SAO) 的设计与实现，以及 [NodeGet](https://github.com/NodeSeekDev/NodeGet) 项目。

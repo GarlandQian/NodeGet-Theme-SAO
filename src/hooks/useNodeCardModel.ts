@@ -1,5 +1,4 @@
 import { useMemo } from "react";
-import { useFakePingFallback } from "@/hooks/useFakePing";
 import { useHourlyClock, useMinuteClock } from "@/hooks/useClock";
 import { useNodeCardSnapshots } from "@/hooks/useNode";
 import {
@@ -11,7 +10,7 @@ import {
 import { useThemeSettings } from "@/hooks/useThemeSettings";
 import { usePriceVisibility } from "@/hooks/usePriceVisibility";
 import { getCachedPublicPingTasks } from "@/services/api";
-import type { HomepagePingDisplayLine, HomepagePingLine } from "@/types/komari";
+import type { HomepagePingDisplayLine, HomepagePingLine } from "@/types/models";
 import { formatCompactRenewalPrice, formatRenewalPrice } from "@/utils/billing";
 import { getExpireTextColor } from "@/utils/expireStatus";
 import {
@@ -57,7 +56,6 @@ export function useNodeCardModel(
   const { meta, metrics, trafficTrend } = useNodeCardSnapshots(uuid);
   const {
     showCardGroup,
-    fakePingForUnbound,
     homepagePingBindings,
     enableHomepageMultiPing,
     homepageMultiPingTaskIds,
@@ -83,17 +81,11 @@ export function useNodeCardModel(
 
   const hasRealHomepagePingBinding = useMemo(
     () =>
-      multiPingConfigured || hasHomepagePingTaskBinding(uuid, homepagePingBindings),
-    [homepagePingBindings, multiPingConfigured, uuid],
+      realPing.isAssigned || multiPingConfigured || hasHomepagePingTaskBinding(uuid, homepagePingBindings),
+    [homepagePingBindings, multiPingConfigured, realPing.isAssigned, uuid],
   );
   const now = useHourlyClock();
-  const ping = useFakePingFallback(
-    uuid,
-    realPing,
-    metrics?.online === true,
-    fakePingForUnbound && !multiPingActive,
-    homepagePingBindings,
-  );
+  const ping = realPing;
   // 状态跟随每条任务数据进入 Store,不再订阅全局 isRefreshing。这样后台轮询开始/结束
   // 时不会让所有节点卡片仅因一个布尔值变化而重渲染。
   const pingLoading =
@@ -182,8 +174,8 @@ export function useNodeCardModel(
       expire: formatExpireDays(meta.expired_at, now),
       expireColor: getExpireTextColor(meta.expired_at, now),
       isPriceVisible,
-      renewalPrice: isPriceVisible ? formatRenewalPrice(meta) : null,
-      compactRenewalPrice: isPriceVisible ? formatCompactRenewalPrice(meta) : null,
+      renewalPrice: isPriceVisible && meta.price_configured !== false ? formatRenewalPrice(meta) : null,
+      compactRenewalPrice: isPriceVisible && meta.price_configured !== false ? formatCompactRenewalPrice(meta) : null,
       osName: resolveOsInfo(meta.os).name,
       loadBaseline: meta.cpu_cores > 0 ? meta.cpu_cores : 4,
     };
@@ -203,8 +195,6 @@ export function useNodeCardModel(
         pingLossColors,
       ),
       hasRealHomepagePingBinding,
-      // 保留旧字段供外部模型消费者兼容；它表示真实配置状态。
-      hasHomepagePingBinding: hasRealHomepagePingBinding,
       shouldRenderPingBars,
       pingLoading,
       pingError,
@@ -235,7 +225,7 @@ export function useNodeCardModel(
 
     const { loadBaseline } = metaModel;
 
-    // 流量配额：优先使用 Agent 上报的周期流量（若有），否则兜底使用开机累计流量。
+    // 配额只使用周期快照；缺少快照时不能把开机计数器当作周期用量。
     const cycleUp = metrics.cycleUp ?? metrics.trafficUp;
     const cycleDown = metrics.cycleDown ?? metrics.trafficDown;
     const trafficUsage = resolveTrafficUsage(
@@ -252,11 +242,11 @@ export function useNodeCardModel(
       ? "var(--status-success)"
       : trafficUsageColor(trafficUsage.fraction);
     const traffic: TrafficDisplay = {
-      fraction: trafficUsage.fraction,
+      fraction: !trafficUsage.unlimited && metrics.cycleUp == null ? 0 : trafficUsage.fraction,
       color: trafficColor,
-      remainingLabel: trafficUsage.unlimited ? "∞" : formatBytes(trafficUsage.remaining),
-      detail: `${trafficUsedLabel} / ${trafficLimitLabel}`,
-      typeLabel: trafficTypeLabel(meta.traffic_limit_type),
+      remainingLabel: !trafficUsage.unlimited && metrics.cycleUp == null ? "暂无周期数据" : metrics.cyclePartial ? "周期数据不完整" : trafficUsage.unlimited ? "∞" : formatBytes(trafficUsage.remaining),
+      detail: !trafficUsage.unlimited && metrics.cycleUp == null ? `— / ${trafficLimitLabel}` : `${trafficUsedLabel}${metrics.cyclePartial ? " *" : ""} / ${trafficLimitLabel}`,
+      typeLabel: `${trafficTypeLabel(meta.traffic_limit_type)}${metrics.cyclePartial ? " · 周期数据不完整" : ""}`,
     };
 
     return {

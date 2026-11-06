@@ -3,13 +3,15 @@ import { clsx } from "clsx";
 import { useMetricColorsVersion } from "@/hooks/useMetricColors";
 import { usePreferences } from "@/hooks/usePreferences";
 import { useThemeSettings } from "@/hooks/useThemeSettings";
-import type { HomepagePingDisplayLine } from "@/types/komari";
+import type { HomepagePingDisplayLine } from "@/types/models";
 import { resolveCustomLatencyColor, resolveCustomLossColor } from "@/utils/metricTone";
 import { isFallbackTaskName } from "@/utils/pingTasks";
 import { HealthBucketTooltip } from "./HealthBucketTooltip";
 import { LatencyBars } from "./LatencyBars";
 import { QualityBars } from "./QualityBars";
 import { formatHealthBucketTooltip } from "./pingBucketText";
+import { PingDataNotice } from "./PingDataNotice";
+import { pingIssueLabel } from "@/utils/pingStatus";
 
 type MultiPingStatusDensity = "large" | "compact";
 type MultiPingMetric = "latency" | "loss";
@@ -39,20 +41,21 @@ const MultiPingMetricRow = memo(function MultiPingMetricRow({
   );
   const isLoading = line.loadState === "pending";
   const isError = line.loadState === "error";
+  const issueLabel = pingIssueLabel(line.dataIssue);
   const staleError = isError && (line.lastValue != null || line.loss != null);
   const latencyLabel =
     isLoading && line.lastValue == null
       ? "加载中"
       : isError && line.lastValue == null
-        ? "加载失败"
+        ? issueLabel ?? "加载失败"
         : line.lastValue == null
-          ? "无样本"
+          ? line.loss != null ? "超时" : "无样本"
           : `${Math.round(line.lastValue)}ms`;
   const lossLabel =
     isLoading && line.loss == null
       ? "加载中"
       : isError && line.loss == null
-        ? "加载失败"
+        ? issueLabel ?? "加载失败"
         : line.loss == null
           ? "—"
           : `${line.loss.toFixed(1)}%`;
@@ -72,7 +75,7 @@ const MultiPingMetricRow = memo(function MultiPingMetricRow({
       : isError && value == null
         ? "!"
         : value == null
-          ? "—"
+          ? metric === "latency" && line.loss != null ? "超时" : "—"
           : metric === "latency"
             ? Math.round(value)
             : value.toFixed(1);
@@ -84,7 +87,7 @@ const MultiPingMetricRow = memo(function MultiPingMetricRow({
       className="multi-ping-metric-row"
       data-load-state={line.loadState ?? "ready"}
       title={`${displayTaskName} · 延迟 ${latencyLabel} · 丢包 ${lossLabel}${
-        staleError ? " · 刷新失败，显示上次数据" : ""
+        line.dataIssue ? ` · ${line.dataIssue.message}${staleError ? "；显示上次数据" : ""}` : staleError ? " · 刷新失败，显示上次数据" : ""
       }`}
     >
       <div
@@ -98,7 +101,7 @@ const MultiPingMetricRow = memo(function MultiPingMetricRow({
             {showNameSkeleton ? (
               <span className="multi-ping-name-skeleton" aria-label="加载中" />
             ) : (
-              line.taskName
+              <>{line.taskName}<PingDataNotice issue={line.dataIssue} /></>
             )}
           </span>
         )}

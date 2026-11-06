@@ -11,7 +11,7 @@ import type {
   PingLossColors,
   PingLossThresholds,
   PingOverviewBucket,
-} from "@/types/komari";
+} from "@/types/models";
 
 interface QualityBarsProps {
   buckets: PingOverviewBucket[];

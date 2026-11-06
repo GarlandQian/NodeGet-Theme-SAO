@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { NodeInfoSchema, PingRecordSchema } from "@/types/komari";
+import { NodeInfoSchema, PingRecordSchema } from "@/types/models";
 
-describe("Komari schemas", () => {
+describe("NodeGet display models", () => {
   it("exposes transformed node fields through the schema output", () => {
     const node = NodeInfoSchema.parse({ uuid: "node-a", group: null, region: null });
     expect(node.group).toBe("");

@@ -14,7 +14,7 @@ import {
 import { Link } from "react-router-dom";
 import { StatMetricIcon } from "../ui/StatMetricIcon";
 import { formatBytes } from "@/utils/format";
-import type { OverviewCardId } from "@/types/komari";
+import type { OverviewCardId } from "@/types/models";
 import { RenewalReminder } from "./RenewalReminder";
 import type { RenewalReminderSource } from "@/utils/renewalReminder";
 import { getRenewalReminders } from "@/utils/renewalReminder";
@@ -110,28 +110,29 @@ export const OverviewStatCard: React.FC<OverviewStatCardProps> = ({
   const onlineNodes = overview?.onlineNodes ?? 5;
   const offlineNodes = overview?.offlineNodes ?? 1;
   const totalNodes = overview?.totalNodes ?? 6;
-  const onlinePct = totalNodes > 0 ? (onlineNodes / totalNodes) * 100 : 83.3;
+  const onlinePct = totalNodes > 0 ? ((onlineNodes / totalNodes) * 100).toFixed(1) : "—";
 
   const totalRamUsed = overview?.totalRamUsed ?? 54653452288; // 50.9 GB
   const totalRamTotal = overview?.totalRamTotal ?? 92340551680; // 86.0 GB
   const [ramUsedValue, ramUsedUnit] = formatBytes(totalRamUsed).split(" ");
-  const ramPct = totalRamTotal > 0 ? (totalRamUsed / totalRamTotal) * 100 : 59.2;
+  const ramPct = totalRamTotal > 0 ? ((totalRamUsed / totalRamTotal) * 100).toFixed(1) : "—";
 
   const totalDiskUsed = overview?.totalDiskUsed ?? 680749000000; // 634 GB
   const totalDiskTotal = overview?.totalDiskTotal ?? 2099900000000; // 1.91 TB
   const [diskUsedValue, diskUsedUnit] = formatBytes(totalDiskUsed).split(" ");
-  const diskPct = totalDiskTotal > 0 ? (totalDiskUsed / totalDiskTotal) * 100 : 32.3;
+  const diskPct = totalDiskTotal > 0 ? ((totalDiskUsed / totalDiskTotal) * 100).toFixed(1) : "—";
 
-  const todayTrafficBytes = todayTrafficTotal ?? (overview ? 0 : 46278836224); // 43.1 GB
+  const trafficUnavailable = Boolean(overview) && todayTrafficTotal == null;
+  const todayTrafficBytes = todayTrafficTotal ?? (overview ? 0 : 46278836224); // editor preview
   const [trafficValue, trafficUnit] =
-    todayTrafficLoading && todayTrafficTotal === null
+    trafficUnavailable
       ? ["—", ""]
       : formatBytes(todayTrafficBytes).split(" ");
 
   const totalSwapUsed = overview?.totalSwapUsed ?? 7516192768; // 7.00 GB
   const totalSwapTotal = overview?.totalSwapTotal ?? 23622320128; // 22.0 GB
   const [swapUsedValue, swapUsedUnit] = formatBytes(totalSwapUsed).split(" ");
-  const swapPct = totalSwapTotal > 0 ? (totalSwapUsed / totalSwapTotal) * 100 : 31.8;
+  const swapPct = totalSwapTotal > 0 ? ((totalSwapUsed / totalSwapTotal) * 100).toFixed(1) : "—";
 
   const netUp = overview?.netUp ?? 44459622; // 42.4 MB/s
   const netDown = overview?.netDown ?? 64277708; // 61.3 MB/s
@@ -226,7 +227,7 @@ export const OverviewStatCard: React.FC<OverviewStatCardProps> = ({
           </div>
           <div className="mao-stat-footer">
             <span className="mao-stat-caption" title={`已用: ${formatBytes(totalRamUsed)} / 总量: ${formatBytes(totalRamTotal)}`}>
-              共 {formatBytes(totalRamTotal)} · {ramPct.toFixed(1)}%
+              共 {formatBytes(totalRamTotal)} · {ramPct}{ramPct === "—" ? "" : "%"}
             </span>
           </div>
         </div>
@@ -246,7 +247,7 @@ export const OverviewStatCard: React.FC<OverviewStatCardProps> = ({
           </div>
           <div className="mao-stat-footer">
             <span className="mao-stat-caption" title={`已用: ${formatBytes(totalDiskUsed)} / 总量: ${formatBytes(totalDiskTotal)}`}>
-              共 {formatBytes(totalDiskTotal)} · {diskPct.toFixed(1)}%
+              共 {formatBytes(totalDiskTotal)} · {diskPct}{diskPct === "—" ? "" : "%"}
             </span>
           </div>
         </div>
@@ -285,9 +286,9 @@ export const OverviewStatCard: React.FC<OverviewStatCardProps> = ({
           <div className="mao-stat-footer">
             <span
               className="mao-stat-caption"
-              title={`今日全节点出入站累计 ${formatBytes(todayTrafficBytes)}`}
+              title={trafficUnavailable ? "暂无有效流量快照" : `今日可读取节点出入站累计 ${formatBytes(todayTrafficBytes)}`}
             >
-              全节点出入站累计
+              {trafficUnavailable ? "暂无流量数据" : "可读取节点出入站累计"}
             </span>
           </div>
         </div>
@@ -328,7 +329,7 @@ export const OverviewStatCard: React.FC<OverviewStatCardProps> = ({
           </div>
           <div className="mao-stat-value">{renderAssetValue()}</div>
           <div className="mao-stat-footer">
-            <span className="mao-stat-caption">{!isPriceVisible ? "仅管理员可见" : "实时汇率折算"}</span>
+            <span className="mao-stat-caption">{!isPriceVisible ? "费用已隐藏" : "实时汇率折算"}</span>
           </div>
         </div>
       );
@@ -343,7 +344,7 @@ export const OverviewStatCard: React.FC<OverviewStatCardProps> = ({
             </div>
           </div>
           <div className="mao-stat-value">
-            {onlinePct.toFixed(1)} <span className="mao-stat-unit">%</span>
+            {onlinePct} <span className="mao-stat-unit">{onlinePct === "—" ? "" : "%"}</span>
           </div>
           <div className="mao-stat-footer">
             <span className="mao-stat-caption" title={`在线: ${onlineNodes} · 离线: ${offlineNodes} · 总计: ${totalNodes}`}>
@@ -387,7 +388,7 @@ export const OverviewStatCard: React.FC<OverviewStatCardProps> = ({
           </div>
           <div className="mao-stat-footer">
             <span className="mao-stat-caption" title={`已用: ${formatBytes(totalSwapUsed)} / 总量: ${formatBytes(totalSwapTotal)}`}>
-              共 {formatBytes(totalSwapTotal)} · {swapPct.toFixed(1)}%
+              共 {formatBytes(totalSwapTotal)} · {swapPct}{swapPct === "—" ? "" : "%"}
             </span>
           </div>
         </div>

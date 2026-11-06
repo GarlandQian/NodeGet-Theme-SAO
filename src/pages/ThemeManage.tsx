@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ComponentPropsWithoutRef } from "react";
-import { Link, Navigate, useLocation, useSearchParams } from "react-router-dom";
+import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
   ArrowLeft,
@@ -19,8 +19,9 @@ import {
   Activity,
   Server,
   Sparkles,
-  Cloud,
-  CloudAlert,
+  HardDrive,
+  Download,
+  Upload,
   Search,
   Square,
   Sun,
@@ -52,16 +53,15 @@ import { useHourlyClock, useMinuteClock } from "@/hooks/useClock";
 import { useTodayTrafficStats } from "@/hooks/useTodayTrafficStats";
 import { useThemeUpdate } from "@/hooks/useThemeUpdate";
 import { usePreferences } from "@/hooks/usePreferences";
+import { usePriceVisibility } from "@/hooks/usePriceVisibility";
 import { queryClient } from "@/services/queryClient";
 import {
-  ApiRequestError,
-  getAdminClients,
-  getAdminPingTasks,
+  getPublicPingTasks,
   getNodes,
   saveThemeSettings,
 } from "@/services/api";
 import type {
-  AdminClient,
+  NodeInfo,
   OverviewCardId,
   PingLatencyColors,
   PingLatencyThresholds,
@@ -71,7 +71,7 @@ import type {
   PingTask,
   ThemeSettings,
   TrafficSpectrumColors,
-} from "@/types/komari";
+} from "@/types/models";
 import {
   calculateCostSummary,
   calculateCostPremiumAmount,
@@ -87,7 +87,12 @@ import {
   COST_RATE_PRESETS,
   type CostPremiumEntry,
 } from "@/utils/cost";
-import { writeCachedThemeSettings } from "@/hooks/useThemeSettings";
+import {
+  exportThemePreferences,
+  getThemePublicConfig,
+  importThemePreferences,
+  resetLocalThemeSettings,
+} from "@/services/nodegetConfig";
 import { normalizeNodeIdentityList } from "@/utils/nodeIdentity";
 import {
   dedupeGroupLabels,
@@ -487,14 +492,14 @@ function buildPremiumEntry(
   };
 }
 
-function sortClients(clients: AdminClient[]) {
+function sortClients(clients: NodeInfo[]) {
   return [...clients].sort((left, right) => {
     if (left.weight !== right.weight) return left.weight - right.weight;
     return left.name.localeCompare(right.name);
   });
 }
 
-function filterClients(clients: AdminClient[], rawKeyword: string) {
+function filterClients(clients: NodeInfo[], rawKeyword: string) {
   const keyword = rawKeyword.trim().toLowerCase();
   if (!keyword) return clients;
   return clients.filter((client) => {
@@ -511,7 +516,7 @@ function filterClients(clients: AdminClient[], rawKeyword: string) {
 
 function summarizeNodes(
   uuids: string[],
-  clientsById: Map<string, AdminClient>,
+  clientsById: Map<string, NodeInfo>,
 ) {
   if (uuids.length === 0) return "未绑定节点";
   const names = uuids.map((uuid) => clientsById.get(uuid)?.name || uuid);
@@ -616,7 +621,6 @@ function pickManagedThemeSettings(settings: ResolvedThemeSettings) {
     homepagePingBindings: settings.homepagePingBindings,
     enableHomepageMultiPing: settings.enableHomepageMultiPing,
     homepageMultiPingTaskIds: settings.homepageMultiPingTaskIds,
-    fakePingForUnbound: settings.fakePingForUnbound,
     pingLatencyThresholds: settings.pingLatencyThresholds,
     pingLatencyColors: settings.pingLatencyColors,
     pingLossThresholds: settings.pingLossThresholds,
@@ -677,7 +681,7 @@ type ThemeDraft = Omit<
   costIgnoredText: string;
 };
 
-// 服务端设置 → 表单草稿。reseed effect 和重置按钮都经 seedDrafts 走这里。
+// 主题设置 → 表单草稿。reseed effect 和重置按钮都经 seedDrafts 走这里。
 function draftFromSettings(settings: ResolvedThemeSettings): ThemeDraft {
   const {
     hiddenNodes,
@@ -759,7 +763,7 @@ const THEME_TABS: ReadonlyArray<{
   hint: string;
   icon: typeof ListFilter;
 }> = [
-  { id: "home", label: "首页", hint: "外观、展台、权限与评级", icon: ListFilter },
+  { id: "home", label: "首页", hint: "外观、展台、入口与评级", icon: ListFilter },
   { id: "card", label: "服务器", hint: "视图、指标、排序与延迟", icon: Server },
   { id: "cost", label: "资产", hint: "费用统计与二手溢价", icon: CircleDollarSign },
   { id: "feedback", label: "帮助", hint: "常见问题与建议反馈", icon: HelpCircle },
@@ -767,37 +771,15 @@ const THEME_TABS: ReadonlyArray<{
 
 const PROJECT_REPOS = [
   {
-    id: "komari",
-    name: "Komari SAO",
-    tag: "Komari",
-    repo: "WAOR/Komari-Theme-SAO",
-    url: "https://github.com/WAOR/Komari-Theme-SAO",
-    issuesUrl: "https://github.com/WAOR/Komari-Theme-SAO/issues",
-    newIssueUrl: "https://github.com/WAOR/Komari-Theme-SAO/issues/new",
-    desc: "适配 Komari 探针的 SAO 风格主题。",
+    id: "nodeget",
+    name: "NodeGet SAO",
+    tag: "NodeGet",
+    repo: "GarlandQian/NodeGet-Theme-SAO",
+    url: "https://github.com/GarlandQian/NodeGet-Theme-SAO",
+    issuesUrl: "https://github.com/GarlandQian/NodeGet-Theme-SAO/issues",
+    newIssueUrl: "https://github.com/GarlandQian/NodeGet-Theme-SAO/issues/new",
+    desc: "适配 NodeGet 的 SAO 风格主题。",
     isCurrent: true,
-  },
-  {
-    id: "monitor",
-    name: "Monitor SAO",
-    tag: "Monitor 极简探针",
-    repo: "WAOR/Monitor-SAO",
-    url: "https://github.com/WAOR/Monitor-SAO",
-    issuesUrl: "https://github.com/WAOR/Monitor-SAO/issues",
-    newIssueUrl: "https://github.com/WAOR/Monitor-SAO/issues/new",
-    desc: "适配 Monitor 极简探针的 SAO 风格主题。",
-    isCurrent: false,
-  },
-  {
-    id: "cfsm",
-    name: "CFSM SAO",
-    tag: "Cloudflare Server Monitor",
-    repo: "WAOR/CFSM-SAO",
-    url: "https://github.com/WAOR/CFSM-SAO",
-    issuesUrl: "https://github.com/WAOR/CFSM-SAO/issues",
-    newIssueUrl: "https://github.com/WAOR/CFSM-SAO/issues/new",
-    desc: "适配 CFSM (Cloudflare Server Monitor) 探针的 SAO 风格主题。",
-    isCurrent: false,
   },
 ] as const;
 
@@ -811,7 +793,7 @@ const BODY_BOTTOM_GAP = 2;
 const MIN_BODY_HEIGHT = 320;
 
 const EMPTY_ASSIGNED_CLIENTS: string[] = [];
-const EMPTY_ADMIN_CLIENTS: AdminClient[] = [];
+const EMPTY_NODES: NodeInfo[] = [];
 
 // 单个 Ping 任务的绑定卡片。memo:编辑无关设置的击键不再重渲任务列表;展开态的
 // tasks×clients 复选网格只在绑定/搜索/展开变化时重算。
@@ -830,8 +812,8 @@ const TaskBindingSection = memo(function TaskBindingSection({
   task: PingTask;
   assigned: string[];
   expanded: boolean;
-  clientsById: Map<string, AdminClient>;
-  visibleClients: AdminClient[];
+  clientsById: Map<string, NodeInfo>;
+  visibleClients: NodeInfo[];
   assignedTaskByClientUuid: Map<string, string>;
   nodeSearch: string;
   onNodeSearch: (value: string) => void;
@@ -847,7 +829,7 @@ const TaskBindingSection = memo(function TaskBindingSection({
         const assignedTaskId = assignedTaskByClientUuid.get(client.uuid);
         return !assignedTaskId || assignedTaskId === String(task.id);
       })
-    : EMPTY_ADMIN_CLIENTS;
+    : EMPTY_NODES;
   const allVisibleSelectableAssigned =
     selectableVisibleClients.length > 0 &&
     selectableVisibleClients.every((client) => assigned.includes(client.uuid));
@@ -998,7 +980,7 @@ const PremiumList = memo(function PremiumList({
   onPatchPaid,
   onPatchAcquiredAt,
 }: {
-  clients: AdminClient[];
+  clients: NodeInfo[];
   costPremiums: ThemeDraft["costPremiums"];
   detailByUuid: Map<string, PremiumDetail>;
   rateLoading: boolean;
@@ -1119,14 +1101,14 @@ function SiteSyncIndicator({
   onRetry?: () => void;
 }) {
   const [icon, text] = invalid
-    ? [<CloudAlert key="invalid" size={14} />, "存在未完成的设置项"]
+    ? [<AlertCircle key="invalid" size={14} />, "存在未完成的设置项"]
     : phase === "saving" || waiting
-      ? [<RefreshCw key="syncing" size={14} className="animate-spin" />, "正在同步到后端…"]
+      ? [<RefreshCw key="syncing" size={14} className="animate-spin" />, "正在保存到本机…"]
       : phase === "synced"
-        ? [<Cloud key="synced" size={14} />, "已同步到后端"]
+        ? [<HardDrive key="synced" size={14} />, "已保存到当前浏览器"]
         : phase === "error"
-          ? [<CloudAlert key="error" size={14} />, "同步失败，点击重试"]
-          : [<Cloud key="idle" size={14} />, "改动会自动同步到后端"];
+          ? [<AlertCircle key="error" size={14} />, "本机保存失败，点击重试"]
+          : [<HardDrive key="idle" size={14} />, "改动会自动保存到本机"];
 
   return (
     <button
@@ -1149,6 +1131,7 @@ export function ThemeManage() {
   const now = useHourlyClock();
   const { currentVersion } = useThemeUpdate();
   const { setAppearance } = usePreferences();
+  const { isPriceVisible } = usePriceVisibility();
   const {
     data: config,
     isLoading: configLoading,
@@ -1235,7 +1218,8 @@ export function ThemeManage() {
   const autoSaveFlushRef = useRef<(() => void) | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [accessRevoked, setAccessRevoked] = useState(false);
+  const [transferBusy, setTransferBusy] = useState(false);
+  const importInputRef = useRef<HTMLInputElement>(null);
 
   // 右上角悬浮气泡 Toast（fixed 脱离文档流，0 挤动页面布局，3 秒自动淡出）
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -1399,18 +1383,18 @@ export function ThemeManage() {
     isLoading: tasksLoading,
     error: tasksError,
   } = useQuery({
-    queryKey: ["admin", "ping-tasks"],
-    queryFn: ({ signal }) => getAdminPingTasks({ signal }),
+    queryKey: ["public-ping-tasks"],
+    queryFn: ({ signal }) => getPublicPingTasks({ signal }),
     staleTime: 30_000,
     retry: false,
   });
   const {
-    data: adminClients,
+    data: themeNodes,
     isLoading: clientsLoading,
     error: clientsError,
   } = useQuery({
-    queryKey: ["admin", "clients"],
-    queryFn: ({ signal }) => getAdminClients({ signal }),
+    queryKey: ["theme", "nodes"],
+    queryFn: ({ signal }) => getNodes({ signal }),
     staleTime: 30_000,
     retry: false,
   });
@@ -1419,20 +1403,20 @@ export function ThemeManage() {
     () => normalizeThemeSettings(config?.theme_settings),
     [config?.theme_settings],
   );
-  // 按内容判断服务端设置是否真的变化，避免同内容 refetch 重置草稿。
+  // 按内容判断主题设置是否真的变化，避免同内容 refetch 重置草稿。
   const sourceSignature = useMemo(
     () => JSON.stringify(pickManagedThemeSettings(sourceThemeSettings)),
     [sourceThemeSettings],
   );
   const lastSeededSignatureRef = useRef<string | null>(null);
 
-  // 把服务端设置灌入草稿的唯一出口,reseed effect 和重置按钮都走它,避免两边逻辑漂移。
+  // 把主题设置灌入草稿的唯一出口,reseed effect 和重置按钮都走它,避免两边逻辑漂移。
   const seedDrafts = useCallback((next: ResolvedThemeSettings) => {
     setDraft(draftFromSettings(next));
   }, []);
 
   const sortedTasks = useMemo(() => sortTasks(pingTasks ?? []), [pingTasks]);
-  const sortedClients = useMemo(() => sortClients(adminClients ?? []), [adminClients]);
+  const sortedClients = useMemo(() => sortClients(themeNodes ?? []), [themeNodes]);
   const clientsById = useMemo(
     () => new Map(sortedClients.map((client) => [client.uuid, client])),
     [sortedClients],
@@ -1686,12 +1670,12 @@ export function ThemeManage() {
     queryFn: ({ signal }) => getExchangeRates(sourceThemeSettings.costRateApiUrl, { signal }),
     initialData: () => readCachedExchangeRates(sourceThemeSettings.costRateApiUrl, true) ?? undefined,
     staleTime: 60 * 60 * 1000,
-    enabled: allMeta.length > 0,
+    enabled: isPriceVisible && allMeta.length > 0,
     retry: 1,
   });
   const premiumDetailByUuid = useMemo(() => {
     const map = new Map<string, ReturnType<typeof calculateCostSummary>["details"][number]>();
-    if (!premiumRateQuery.data) return map;
+    if (!isPriceVisible || !premiumRateQuery.data) return map;
     const summary = calculateCostSummary(
       allMeta,
       sourceThemeSettings.costIgnoredNodes,
@@ -1701,10 +1685,10 @@ export function ThemeManage() {
     );
     for (const detail of summary.details) map.set(detail.uuid, detail);
     return map;
-  }, [allMeta, now, sourceThemeSettings.costIgnoredNodes, premiumRateQuery.data]);
+  }, [allMeta, now, sourceThemeSettings.costIgnoredNodes, premiumRateQuery.data, isPriceVisible]);
 
   const realCostSummary = useMemo(() => {
-    if (!premiumRateQuery.data || allMeta.length === 0) return null;
+    if (!isPriceVisible || !premiumRateQuery.data || allMeta.length === 0) return null;
     return calculateCostSummary(
       allMeta,
       sourceThemeSettings.costIgnoredNodes,
@@ -1712,7 +1696,7 @@ export function ThemeManage() {
       undefined,
       now,
     );
-  }, [allMeta, now, sourceThemeSettings.costIgnoredNodes, premiumRateQuery.data]);
+  }, [allMeta, now, sourceThemeSettings.costIgnoredNodes, premiumRateQuery.data, isPriceVisible]);
 
   const trafficUuids = useMemo(() => allMeta.map((n) => n.uuid), [allMeta]);
   const todayTrafficClock = useMinuteClock();
@@ -1863,7 +1847,7 @@ function draftToThemeSettings(targetDraft: ThemeDraft): ThemeSettings {
     [draft],
   );
 
-  // 只比较本页实际管理的设置。enableAdminButton/showPingChart 这类隐藏设置会通过
+  // 只比较本页实际管理的设置。showPingChart 这类隐藏设置会通过
   // baseSettings 在保存时保留,但不该让表单永远显示为 dirty。
   const draftSignature = useMemo(
     () => managedSettingsSignature(draftThemeSettings as ThemeSettings & Record<string, unknown>),
@@ -1884,7 +1868,7 @@ function draftToThemeSettings(targetDraft: ThemeDraft): ThemeSettings {
     if (isDirty) setMessage(null);
   }, [isDirty]);
 
-  // 服务端设置真正变化时灌入草稿。首次灌入之后,只要表单有未保存编辑(含保存中)就跳过,
+  // 主题设置真正变化时灌入草稿。首次灌入之后,只要表单有未保存编辑(含保存中)就跳过,
   // 避免 refetch / 其他端保存的回流静默覆盖用户草稿。
   useEffect(() => {
     if (!config) return;
@@ -1927,7 +1911,6 @@ function draftToThemeSettings(targetDraft: ThemeDraft): ThemeSettings {
         ...(config.theme_settings ?? {}),
         ...currentDraftThemeSettings,
       };
-      writeCachedThemeSettings(nextSettings);
       const savePromise = saveThemeSettings(config.theme, nextSettings);
       const minDelayPromise = new Promise((resolve) => setTimeout(resolve, 260));
       await Promise.all([savePromise, minDelayPromise]);
@@ -1941,28 +1924,19 @@ function draftToThemeSettings(targetDraft: ThemeDraft): ThemeSettings {
       }
     } catch (saveError) {
       setSyncPhase("error");
-      if (
-        saveError instanceof ApiRequestError &&
-        (saveError.status === 401 || saveError.status === 403)
-      ) {
-        showToast("同步失败：管理员未登录或凭据已失效");
-        setAccessRevoked(true);
-        return;
-      }
-      const errMsg = saveError instanceof Error ? saveError.message : "同步失败";
+      const errMsg = saveError instanceof Error ? saveError.message : "本机保存失败";
       showToast(errMsg);
       setError(errMsg);
-      throw saveError;
     } finally {
       savingDraftRef.current = null;
-      }
+    }
   };
 
   const THEME_AUTO_SAVE_DEBOUNCE_MS = 800;
   const draftAwaitingAutoSave = isDirty && syncPhase !== "saving";
 
   useEffect(() => {
-    if (!config || editVersionRef.current === 0) return;
+    if (!config || editVersionRef.current === 0 || transferBusy) return;
     if (!isDirty) return;
     if (draftCostRateApiUrlInvalid || draftMultiPingInvalid) {
       if (autoSaveTimerRef.current) {
@@ -1988,6 +1962,7 @@ function draftToThemeSettings(targetDraft: ThemeDraft): ThemeSettings {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     config,
+    transferBusy,
     draftCostRateApiUrlInvalid,
     draftMultiPingInvalid,
     isDirty,
@@ -2001,6 +1976,56 @@ function draftToThemeSettings(targetDraft: ThemeDraft): ThemeSettings {
       }
     };
   }, []);
+
+  const handleExport = async () => {
+    setTransferBusy(true);
+    setError(null);
+    try {
+      const text = await exportThemePreferences({
+        ...(config?.theme_settings ?? {}),
+        ...draftToThemeSettings(draft),
+      });
+      const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "nodeget-sao-preferences.json";
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      showToast("已导出主题偏好，不含主控连接与 Token");
+    } catch (exportError) {
+      setError(exportError instanceof Error ? exportError.message : "导出失败");
+    } finally {
+      setTransferBusy(false);
+    }
+  };
+
+  const applyImportedOrSiteSettings = async (file?: File) => {
+    setTransferBusy(true);
+    setError(null);
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    autoSaveTimerRef.current = null;
+    autoSaveFlushRef.current = null;
+    try {
+      if (file) {
+        if (file.size > 2 * 1024 * 1024) throw new Error("配置文件不能大于 2 MB");
+        await importThemePreferences(await file.text());
+      } else {
+        resetLocalThemeSettings();
+      }
+      const next = await getThemePublicConfig();
+      editVersionRef.current = 0;
+      lastSeededSignatureRef.current = managedSettingsSignature(next.theme_settings);
+      seedDrafts(normalizeThemeSettings(next.theme_settings));
+      queryClient.setQueryData(["public"], next);
+      setSyncPhase("idle");
+      setMessage(file ? "配置已导入当前浏览器，站点费用公开状态保持不变。" : "已清除本机自定义设置，恢复站点配置。");
+    } catch (importError) {
+      setError(importError instanceof Error ? importError.message : "配置应用失败");
+    } finally {
+      setTransferBusy(false);
+      if (importInputRef.current) importInputRef.current.value = "";
+    }
+  };
 
   if (configLoading) {
     return (
@@ -2037,21 +2062,7 @@ function draftToThemeSettings(targetDraft: ThemeDraft): ThemeSettings {
     );
   }
 
-  if (accessRevoked) {
-    return <Navigate to="/" replace />;
-  }
-
-  const adminAccessDenied =
-    (tasksError instanceof ApiRequestError &&
-      (tasksError.status === 401 || tasksError.status === 403)) ||
-    (clientsError instanceof ApiRequestError &&
-      (clientsError.status === 401 || clientsError.status === 403));
-
-  if (adminAccessDenied) {
-    return <Navigate to="/" replace />;
-  }
-
-  const adminError =
+  const dataError =
     (tasksError instanceof Error ? tasksError.message : null) ||
     (clientsError instanceof Error ? clientsError.message : null);
   const noTasksYet = !tasksLoading && !clientsLoading && sortedTasks.length === 0;
@@ -2106,7 +2117,31 @@ function draftToThemeSettings(targetDraft: ThemeDraft): ThemeSettings {
         </div>
       </header>
 
-      {(message || error || adminError) && (
+      <section className="surface-inset rounded-xl px-4 py-3 flex flex-wrap items-center gap-3" aria-label="主题配置导入导出">
+        <div className="min-w-0 flex-1 basis-64">
+          <p className="text-[13px] font-medium text-(--text-primary)">这里的修改只影响当前浏览器</p>
+          <p className="mt-1 text-[12px] leading-relaxed text-(--text-secondary)">
+            需要全站生效时，导出后将内容完整替换到 NodeGet 主题配置的 user_preferences；独立部署时替换 config.json 中同名字段。连接信息和 Token 不会导出。
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" onClick={() => void handleExport()} disabled={transferBusy || draftCostRateApiUrlInvalid || draftMultiPingInvalid} className="control-button flex items-center gap-1.5 px-3 py-2 text-[12px] disabled:opacity-50">
+            <Download size={14} />导出配置
+          </button>
+          <button type="button" onClick={() => importInputRef.current?.click()} disabled={transferBusy || syncPhase === "saving"} className="control-button flex items-center gap-1.5 px-3 py-2 text-[12px] disabled:opacity-50">
+            <Upload size={14} />导入配置
+          </button>
+          <button type="button" onClick={() => void applyImportedOrSiteSettings()} disabled={transferBusy || syncPhase === "saving"} className="control-button flex items-center gap-1.5 px-3 py-2 text-[12px] disabled:opacity-50">
+            <RotateCcw size={14} />恢复站点设置
+          </button>
+          <input ref={importInputRef} type="file" accept="application/json,.json" hidden onChange={(event) => {
+            const file = event.currentTarget.files?.[0];
+            if (file) void applyImportedOrSiteSettings(file);
+          }} />
+        </div>
+      </section>
+
+      {(message || error || dataError) && (
         <div className="flex flex-col gap-3">
           {message && (
             <div
@@ -2125,12 +2160,12 @@ function draftToThemeSettings(targetDraft: ThemeDraft): ThemeSettings {
               {error}
             </div>
           )}
-          {adminError && (
+          {dataError && (
             <div
               role="alert"
               className="rounded-xl border border-[color-mix(in_srgb,var(--status-offline)_28%,transparent)] bg-[color-mix(in_srgb,var(--status-offline)_11%,var(--surface))] px-4 py-3 text-[13px] text-(--status-offline)"
             >
-              无法读取后台 Ping 任务或节点列表: {adminError}
+              部分 Ping 任务或节点信息不可用，仍可编辑其他设置： {dataError}
             </div>
           )}
         </div>
@@ -2423,6 +2458,7 @@ function draftToThemeSettings(targetDraft: ThemeDraft): ThemeSettings {
                                     cardId={cardId}
                                     overview={realOverview}
                                     costSummary={realCostSummary}
+                                    isPriceVisible={isPriceVisible}
                                     todayTrafficTotal={todayTrafficTotal}
                                     todayTrafficLoading={todayTrafficTotal === null && todayTrafficQuery.isPending}
                                     className="w-full pointer-events-none shadow-none"
@@ -2514,6 +2550,7 @@ function draftToThemeSettings(targetDraft: ThemeDraft): ThemeSettings {
                                   cardId={cardId}
                                   overview={realOverview}
                                   costSummary={realCostSummary}
+                                    isPriceVisible={isPriceVisible}
                                   todayTrafficTotal={todayTrafficTotal}
                                   todayTrafficLoading={todayTrafficTotal === null && todayTrafficQuery.isPending}
                                   className="w-full pointer-events-none shadow-xs"
@@ -2732,8 +2769,8 @@ function draftToThemeSettings(targetDraft: ThemeDraft): ThemeSettings {
               </InstancePanel>
 
               <InstancePanel
-                kicker="权限"
-                title="访客权限"
+                kicker="展示"
+                title="页面入口与费用公开"
                 aside={<Compass size={16} />}
               >
                 <div className="flex flex-col gap-4">
@@ -2750,7 +2787,7 @@ function draftToThemeSettings(targetDraft: ThemeDraft): ThemeSettings {
                       <ToggleRow
                         field="showCostSummary"
                         title="资产入口"
-                        desc="在资产卡片显示进入按钮；未公开时仅管理员可见。"
+                        desc="资产费用已公开时，在资产卡片显示统计页入口。"
                         checked={draft.showCostSummary}
                         onPatch={patch}
                       />
@@ -2765,22 +2802,21 @@ function draftToThemeSettings(targetDraft: ThemeDraft): ThemeSettings {
                   </div>
 
                   <div className="border-t border-(--border-subtle) pt-3">
-                    <span className="setting-subhead-title block mb-2">访客公开与可见性权限</span>
+                    <span className="setting-subhead-title block mb-2">页面可见性</span>
                     <div className="grid gap-3 md:grid-cols-2">
                       <ToggleRow
                         field="showTrafficPageForGuests"
                         title="公开流量"
-                        desc="允许访客点击流量卡片入口，查看用量明细。"
+                        desc="在首页提供流量统计入口，查看 NodeGet 用量明细。"
                         checked={draft.showTrafficPageForGuests}
                         onPatch={patch}
                       />
-                      <ToggleRow
-                        field="showPriceForGuests"
-                        title="公开资产"
-                        desc="允许访客查看机器价格与资产总额，关闭则保密。"
-                        checked={draft.showPriceForGuests}
-                        onPatch={patch}
-                      />
+                      <div className="surface-inset rounded-xl px-4 py-3 text-[13px]">
+                        <strong className="text-(--text-primary)">资产费用：{sourceThemeSettings.showPriceForGuests ? "站点已公开" : "站点未公开"}</strong>
+                        <p className="mt-1 leading-relaxed text-(--text-secondary)">
+                          由站长在部署配置中开启，本地设置不能修改公开状态。截图防窥仅隐藏当前屏幕上的费用。
+                        </p>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -3021,8 +3057,8 @@ function draftToThemeSettings(targetDraft: ThemeDraft): ThemeSettings {
                 <div className="flex flex-col gap-4">
                   <ToggleRow
                     field="enableHomeSort"
-                    title="访客排序"
-                    desc="允许访客在首页通过下拉菜单更改排序。"
+                    title="首页排序"
+                    desc="允许在首页通过下拉菜单临时更改排序。"
                     checked={draft.enableHomeSort}
                     onPatch={patch}
                   />
@@ -3108,7 +3144,7 @@ function draftToThemeSettings(targetDraft: ThemeDraft): ThemeSettings {
               <InstancePanel
                 kicker="延迟"
                 title="网络延迟"
-                description="设定延迟展示方式并为服务器指定线路。"
+                description="自动读取 NodeGet 的 Ping / TCPing 记录，也可为节点指定优先展示线路。"
                 aside={<Activity size={16} />}
               >
                 <div className="flex flex-col gap-4">
@@ -3204,20 +3240,16 @@ function draftToThemeSettings(targetDraft: ThemeDraft): ThemeSettings {
                           />
                         </label>
                         <div className="surface-inset flex items-center justify-between gap-3 px-3 py-2 text-[12px] text-(--text-secondary)">
-                          <span>首页绑定总数</span>
+                          <span>已发现任务</span>
                           <strong className="text-(--text-primary)">
                             {`${sortedTasks.length} 个任务`}
                           </strong>
                         </div>
                       </div>
 
-                      <ToggleRow
-                        field="fakePingForUnbound"
-                        title="平滑占位"
-                        desc="无探测数据时显示平滑占位，保持视觉整齐。"
-                        checked={draft.fakePingForUnbound}
-                        onPatch={patch}
-                      />
+                      <p className="text-[12px] text-(--text-secondary)">
+                        未指定线路的节点会自动展示已有 Ping / TCPing 任务；这里的选择只覆盖首页展示，不会修改主控任务。无探测记录时显示暂无数据。
+                      </p>
 
                       {(tasksLoading || clientsLoading) && (
                         <div className="flex min-h-[20vh] items-center justify-center">
@@ -3228,9 +3260,7 @@ function draftToThemeSettings(targetDraft: ThemeDraft): ThemeSettings {
                       {noTasksYet && (
                         <div className="theme-manage-empty-state">
                           <span>当前还没有可用于首页展示的 Ping 任务。</span>
-                          <a href="/admin/ping" className="theme-manage-inline-link">
-                            前往后台 Ping 管理创建任务
-                          </a>
+                          <span className="text-[12px] text-(--text-muted)">请确认主控已有 Ping / TCPing 任务，且展示 Token 具有读取权限。</span>
                         </div>
                       )}
 
@@ -3254,7 +3284,7 @@ function draftToThemeSettings(targetDraft: ThemeDraft): ThemeSettings {
                               }
                               expanded={expanded}
                               clientsById={clientsById}
-                              visibleClients={expanded ? visibleClients : EMPTY_ADMIN_CLIENTS}
+                              visibleClients={expanded ? visibleClients : EMPTY_NODES}
                               assignedTaskByClientUuid={assignedTaskByClientUuid}
                               nodeSearch={expanded ? nodeSearch : ""}
                               onNodeSearch={setNodeSearch}
@@ -3829,7 +3859,10 @@ function draftToThemeSettings(targetDraft: ThemeDraft): ThemeSettings {
                     </div>
                   )}
 
-                  {!clientsLoading && filteredPremiumClients.length > 0 && (
+                  {!isPriceVisible && (
+                    <p className="text-[13px] text-(--text-secondary)">资产费用未公开或已启用截图防窥，费用明细暂不显示。已有配置会在导出时保留。</p>
+                  )}
+                  {isPriceVisible && !clientsLoading && filteredPremiumClients.length > 0 && (
                     <PremiumList
                       clients={filteredPremiumClients}
                       costPremiums={draft.costPremiums}
@@ -4062,18 +4095,18 @@ function draftToThemeSettings(targetDraft: ThemeDraft): ThemeSettings {
                   <div className="space-y-1">
                     <div className="flex items-center gap-2">
                       <span className="text-xs font-semibold text-(--text-primary)">
-                        Komari SAO Theme
+                        NodeGet SAO Theme
                       </span>
                       <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded border border-(--hairline) bg-(--bg-card) text-(--accent-500)">
                         {currentVersion}
                       </span>
                     </div>
                     <p className="text-xs text-(--text-muted)">
-                      服务于探针数据呈现本身的高自由度模块化主题
+                      NodeGet 原生监控主题 · SAO 视觉设计，感谢 WAOR 与社区贡献者
                     </p>
                   </div>
                   <a
-                    href="https://github.com/WAOR/Komari-Theme-SAO"
+                    href="https://github.com/GarlandQian/NodeGet-Theme-SAO"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold border border-(--hairline) bg-(--bg-card) text-(--text-primary) hover:border-(--accent-500) hover:text-(--accent-500) shadow-xs transition-colors shrink-0 cursor-pointer"

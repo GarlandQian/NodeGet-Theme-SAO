@@ -11,7 +11,7 @@ import {
   normalizeCostRateApiUrl,
   DEFAULT_COST_RATE_API_URL,
 } from "@/utils/cost";
-import type { NodeInfo } from "@/types/komari";
+import type { NodeInfo } from "@/types/models";
 
 const RATES = { USD: 1, CNY: 7 };
 const RATES_X = { USD: 1, EUR: 0.9, CNY: 7 };
@@ -486,12 +486,12 @@ describe("cost helpers", () => {
 
     const futureUrl = "https://cache.test/future";
     entries.set(
-      `komaritheme:cost-rates:${futureUrl}`,
+      `nodeget-sao:cost-rates:${futureUrl}`,
       JSON.stringify({ rates: { CNY: 999 }, time: Date.now() + 60_000 }),
     );
     const malformedUrl = "https://cache.test/malformed";
     entries.set(
-      `komaritheme:cost-rates:${malformedUrl}`,
+      `nodeget-sao:cost-rates:${malformedUrl}`,
       JSON.stringify({ rates: "invalid", time: Date.now() }),
     );
 
@@ -506,7 +506,7 @@ describe("cost helpers", () => {
 
   it("can bypass a fresh exchange-rate cache for manual refresh", async () => {
     const url = "https://cache.test/manual";
-    const key = `komaritheme:cost-rates:${url}`;
+    const key = `nodeget-sao:cost-rates:${url}`;
     const entries = new Map([
       [key, JSON.stringify({ rates: { USD: 1, CNY: 6 }, time: Date.now() })],
     ]);
@@ -532,7 +532,7 @@ describe("cost helpers", () => {
 
   it("does not replace a cancelled request with stale cached rates", async () => {
     const url = "https://cache.test/cancelled";
-    const key = `komaritheme:cost-rates:${url}`;
+    const key = `nodeget-sao:cost-rates:${url}`;
     const entries = new Map([
       [
         key,

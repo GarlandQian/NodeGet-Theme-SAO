@@ -47,11 +47,11 @@ function runTypecheck() {
 
 function assertVersionsAligned() {
   const pkg = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8"));
-  const manifest = JSON.parse(readFileSync(resolve(root, "komari-theme.json"), "utf8"));
+  const manifest = JSON.parse(readFileSync(resolve(root, "nodeget-theme.json"), "utf8"));
   if (pkg.version !== manifest.version) {
     throw new Error(
-      `Version mismatch: package.json is ${pkg.version} but komari-theme.json is ${manifest.version}. ` +
-        "Align them before releasing — the packaged zip is named from komari-theme.json.",
+      `Version mismatch: package.json is ${pkg.version} but nodeget-theme.json is ${manifest.version}. ` +
+        "Align them before releasing — the packaged zip is named from nodeget-theme.json.",
     );
   }
 }
@@ -72,5 +72,5 @@ console.log("Building...");
 await viteBuild({ root });
 
 console.log("Packaging...");
-await importScript("scripts/make-preview.mjs");
+await importScript("scripts/build-artifacts.mjs");
 await importScript("scripts/package-zip.mjs");

@@ -1,20 +1,21 @@
 import { GitBranch, ExternalLink } from "lucide-react";
 import clsx from "clsx";
 import { useThemeUpdate } from "@/hooks/useThemeUpdate";
+import { usePublicConfig } from "@/hooks/usePublicConfig";
 
 export function HomeFooter() {
-  const { hasUpdate, currentVersion, latestVersion, releaseUrl, toggleMockUpdate } = useThemeUpdate();
+  const { hasUpdate, currentVersion, latestVersion, releaseUrl } = useThemeUpdate();
+  const { data: config } = usePublicConfig();
+  const footer = typeof config?.footer === "string" ? config.footer : "";
 
   return (
-    <footer className="home-site-footer" aria-label="主题版本与仓库链接">
+    <footer className="home-site-footer" aria-label="主题版本与仓库链接" style={{ flexDirection: "column", gap: "0.6rem" }}>
       <div className="home-footer-capsule">
         {/* 左侧呼吸点与主题标识 */}
         <div className="home-footer-brand">
-          <button
-            type="button"
+          <span
             className={clsx("home-footer-pulse", hasUpdate && "has-update")}
-            title={hasUpdate ? `发现新版本 ${latestVersion} (点击可切换预览状态)` : "状态正常 (点击可切换更新预览)"}
-            onClick={toggleMockUpdate}
+            title={hasUpdate ? `发现新版本 ${latestVersion}` : "当前主题版本"}
             aria-label="版本状态指示点"
           />
           <span className="home-footer-title">SAO</span>
@@ -55,7 +56,7 @@ export function HomeFooter() {
 
         {/* GitHub 交互链接 */}
         <a
-          href="https://github.com/WAOR/Komari-Theme-SAO"
+          href="https://github.com/GarlandQian/NodeGet-Theme-SAO"
           target="_blank"
           rel="noopener noreferrer"
           className="home-footer-github"
@@ -75,6 +76,7 @@ export function HomeFooter() {
           <ExternalLink size={9} className="home-footer-external-icon" aria-hidden="true" />
         </a>
       </div>
+      {footer && <span style={{ color: "var(--text-tertiary)", fontSize: "0.7rem", textAlign: "center" }}>{footer}</span>}
     </footer>
   );
 }

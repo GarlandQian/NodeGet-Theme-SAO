@@ -7,7 +7,7 @@ import type {
   ThemeSettings,
   TrafficSpectrumColors,
   UserMatrixPreset,
-} from "@/types/komari";
+} from "@/types/models";
 import {
   DEFAULT_COST_RATE_API_URL,
   normalizeCostIgnoredNodes,
@@ -238,12 +238,10 @@ export interface ResolvedThemeSettings {
   matrixBootEffect: MatrixBootEffect;
   matrixCustomPattern: number[] | null;
   matrixUserPresets: UserMatrixPreset[];
-  enableAdminButton: boolean;
   showPingChart: boolean;
   homepagePingBindings: HomepagePingTaskBindings;
   enableHomepageMultiPing: boolean;
   homepageMultiPingTaskIds: number[];
-  fakePingForUnbound: boolean;
   pingLatencyThresholds: PingLatencyThresholds;
   pingLatencyColors: PingLatencyColors;
   pingLossThresholds: PingLossThresholds;
@@ -291,12 +289,10 @@ export const DEFAULT_THEME_SETTINGS: ResolvedThemeSettings = {
   matrixBootEffect: "laser-scan",
   matrixCustomPattern: null,
   matrixUserPresets: [],
-  enableAdminButton: true,
   showPingChart: true,
   homepagePingBindings: {},
   enableHomepageMultiPing: false,
   homepageMultiPingTaskIds: [],
-  fakePingForUnbound: false,
   pingLatencyThresholds: DEFAULT_PING_LATENCY_THRESHOLDS,
   pingLatencyColors: DEFAULT_PING_LATENCY_COLORS,
   pingLossThresholds: DEFAULT_PING_LOSS_THRESHOLDS,
@@ -454,7 +450,7 @@ function normalizePlainText(value: unknown) {
   return typeof value === "string" ? value : "";
 }
 
-// 管理员默认排序:字段非法回落 default;方向非法时回落该字段的自然方向(文本升、数值降)。
+// 首页默认排序:字段非法回落 default;方向非法时回落该字段的自然方向(文本升、数值降)。
 function normalizeHomeSortDefault(
   field: unknown,
   direction: unknown,
@@ -566,14 +562,11 @@ export function normalizeThemeSettings(
     matrixBootEffect: normalizeMatrixBootEffect(settings?.matrixBootEffect),
     matrixCustomPattern: normalizeMatrixCustomPattern(settings?.matrixCustomPattern),
     matrixUserPresets: normalizeMatrixUserPresets(settings?.matrixUserPresets),
-    enableAdminButton: enabledUnlessFalse(settings?.enableAdminButton),
     showPingChart: enabledUnlessFalse(settings?.showPingChart),
     homepagePingBindings: normalizeHomepagePingTaskBindings(settings?.homepagePingBindings),
     // 保留开关原值，让管理页能呈现并修复不完整配置；首页消费方仅在任务恰好为三项时启用。
     enableHomepageMultiPing: settings?.enableHomepageMultiPing === true,
     homepageMultiPingTaskIds,
-    // 默认关闭(需手动开启):给访客展示的是模拟数据,必须由站长显式决定。
-    fakePingForUnbound: settings?.fakePingForUnbound === true,
     pingLatencyThresholds: normalizePingLatencyThresholds(settings?.pingLatencyThresholds),
     pingLatencyColors: normalizePingLatencyColors(settings?.pingLatencyColors),
     pingLossThresholds: normalizePingLossThresholds(settings?.pingLossThresholds),
@@ -590,7 +583,7 @@ export function normalizeThemeSettings(
     enableHomeSort: enabledUnlessFalse(settings?.enableHomeSort),
     ...normalizeHomeSortDefault(settings?.homeSortField, settings?.homeSortDirection),
     showTrafficPageButton: enabledUnlessFalse(settings?.showTrafficPageButton),
-    // 默认关闭(向访客保密入口):关闭时未登录访客隐藏今日流量右上角图表按钮，保持卡片无图标统一纯净。
+    // 默认关闭流量明细入口，启用后与流量卡片按钮一起生效。
     showTrafficPageForGuests: settings?.showTrafficPageForGuests === true,
     showCostSummary: enabledUnlessFalse(settings?.showCostSummary),
     showCostSummaryFloatingButton: enabledUnlessFalse(settings?.showCostSummaryFloatingButton),

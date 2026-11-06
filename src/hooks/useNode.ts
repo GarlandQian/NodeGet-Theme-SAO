@@ -20,7 +20,7 @@ import {
   type HomeNodeSummary,
   type NodeOnlineSummary,
 } from "@/services/wsStore";
-import type { NodeInfo, NodeMetrics, TrafficTrendSample } from "@/types/komari";
+import type { NodeInfo, NodeMetrics, TrafficTrendSample } from "@/types/models";
 
 const noopUnsubscribe = () => undefined;
 

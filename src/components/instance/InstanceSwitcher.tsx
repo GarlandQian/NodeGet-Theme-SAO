@@ -8,7 +8,6 @@ import {
 } from "react";
 import { useNavigate } from "react-router-dom";
 import { Check, ChevronDown, ChevronUp } from "lucide-react";
-import { useAuth } from "@/hooks/useAuth";
 import { useAllNodeMeta, useHomeNodeSummaries } from "@/hooks/useNode";
 import { useThemeSettings } from "@/hooks/useThemeSettings";
 import { collectMatchingNodeUuids } from "@/utils/nodeIdentity";
@@ -17,7 +16,6 @@ export function InstanceSwitcher({ currentUuid }: { currentUuid: string }) {
   const allMeta = useAllNodeMeta();
   const summaries = useHomeNodeSummaries();
   const { hiddenNodes } = useThemeSettings();
-  const { data: me } = useAuth();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const listId = useId();
@@ -39,14 +37,14 @@ export function InstanceSwitcher({ currentUuid }: { currentUuid: string }) {
     () =>
       allMeta
         .filter(
-          (node) => !hiddenUuids.has(node.uuid) && (me?.logged_in === true || !node.hidden),
+          (node) => !hiddenUuids.has(node.uuid) && !node.hidden,
         )
         .map((node) => ({
           uuid: node.uuid,
           name: node.name?.trim() || node.uuid,
           online: onlineByUuid.get(node.uuid) ?? null,
         })),
-    [allMeta, hiddenUuids, me?.logged_in, onlineByUuid],
+    [allMeta, hiddenUuids, onlineByUuid],
   );
 
   useEffect(() => {

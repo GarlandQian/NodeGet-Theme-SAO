@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import pkg from "../../package.json" with { type: "json" };
 
-const STORAGE_KEY = "komari_sao_update_cache";
+const STORAGE_KEY = "nodeget_sao_update_cache";
 const CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000; // 12 小时检查一次，防 GitHub API 触发限流
 
 interface UpdateState {
@@ -37,13 +37,14 @@ function getNextMockVersion(version: string): string {
   return `v${major}.${minor}.${patch}`;
 }
 
-export function useThemeUpdate(repo = "WAOR/Komari-Theme-SAO") {
+export function useThemeUpdate(repo = "GarlandQian/NodeGet-Theme-SAO") {
   const currentVersion = `v${pkg.version || "1.0.0"}`;
+  const cacheKey = `${STORAGE_KEY}:${repo}`;
   const mockNextVersion = getNextMockVersion(currentVersion);
 
   // 仅在显式传入 ?mockUpdate=1 时强制进入演示模式，日常 ?mock=1 遵循真实状态判定
   const searchParams = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
-  const isMockPreview = searchParams?.get("mockUpdate") === "1";
+  const isMockPreview = import.meta.env.DEV && searchParams?.get("mockUpdate") === "1";
 
   const [state, setState] = useState<UpdateState>(() => {
     // 如果 URL 带有 mockUpdate=1 或在 mock 调试下，默认开启演示效果展示自动递增的下一个版本
@@ -59,7 +60,7 @@ export function useThemeUpdate(repo = "WAOR/Komari-Theme-SAO") {
     // 从 LocalStorage 读取缓存
     if (typeof localStorage !== "undefined") {
       try {
-        const cached = localStorage.getItem(STORAGE_KEY);
+        const cached = localStorage.getItem(cacheKey);
         if (cached) {
           const parsed = JSON.parse(cached);
           if (Date.now() - parsed.timestamp < CHECK_INTERVAL_MS) {
@@ -137,7 +138,7 @@ export function useThemeUpdate(repo = "WAOR/Komari-Theme-SAO") {
 
         try {
           localStorage.setItem(
-            STORAGE_KEY,
+            cacheKey,
             JSON.stringify({
               timestamp: Date.now(),
               latestVersion: cleanLatest,
@@ -155,10 +156,11 @@ export function useThemeUpdate(repo = "WAOR/Komari-Theme-SAO") {
     return () => {
       ignore = true;
     };
-  }, [repo, currentVersion, isMockPreview]);
+  }, [repo, currentVersion, isMockPreview, cacheKey]);
 
   // 提供交互切换（方便用户点击呼吸点随时在“正常绿点”与“橘黄滚动新版本”之间对比）
   const toggleMockUpdate = () => {
+    if (!isMockPreview) return;
     setState((prev) => ({
       ...prev,
       hasUpdate: !prev.hasUpdate,

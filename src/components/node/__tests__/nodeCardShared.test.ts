@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { PingOverviewBucket } from "@/types/komari";
+import type { PingOverviewBucket } from "@/types/models";
 import {
   formatCompactBillingCycle,
   formatCompactExpire,
@@ -143,9 +143,9 @@ describe("formatCompactBillingCycle", () => {
     expect(formatCompactBillingCycle("year", -1)).toBe("免费");
   });
 
-  it("falls back to 年付 for invalid or empty cycle values", () => {
-    expect(formatCompactBillingCycle("")).toBe("年付");
-    expect(formatCompactBillingCycle(null)).toBe("年付");
-    expect(formatCompactBillingCycle(undefined)).toBe("年付");
+  it("does not invent a yearly billing cycle for missing metadata", () => {
+    expect(formatCompactBillingCycle("")).toBe("周期未知");
+    expect(formatCompactBillingCycle(null)).toBe("周期未知");
+    expect(formatCompactBillingCycle(undefined)).toBe("周期未知");
   });
 });

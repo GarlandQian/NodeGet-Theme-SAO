@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
-import { Link, Navigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { CalendarClock, ChevronDown, ChevronLeft, ChevronUp, RefreshCw } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Flag } from "@/components/ui/Flag";
@@ -9,7 +9,7 @@ import { useThemeSettings } from "@/hooks/useThemeSettings";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useHourlyClock } from "@/hooks/useClock";
 import { useVisibleNodes } from "@/hooks/useVisibleNodes";
-import { useAuth } from "@/hooks/useAuth";
+import { usePriceVisibility } from "@/hooks/usePriceVisibility";
 import {
   calculateCostSummary,
   formatCnyMoney,
@@ -123,6 +123,7 @@ export function Assets() {
   const isMobileLayout = useMediaQuery(ASSETS_MOBILE_QUERY);
   const now = useHourlyClock();
   const themeSettings = useThemeSettings();
+  const { isPriceVisible, togglePriceVisibility } = usePriceVisibility();
   const forceRateRefresh = useRef(false);
   const nodes = useVisibleNodes();
   // 资产详情页是风险核对入口：这里始终按真实到期数据展示，不读取首页的关闭/稍后偏好。
@@ -140,7 +141,7 @@ export function Assets() {
     },
     initialData: () => readCachedExchangeRates(themeSettings.costRateApiUrl, true) ?? undefined,
     staleTime: 60 * 60 * 1000,
-    enabled: themeSettings.isReady && nodes.length > 0,
+    enabled: themeSettings.isReady && themeSettings.showPriceForGuests && nodes.length > 0,
     retry: 1,
   });
   const summary = useMemo(
@@ -188,9 +189,6 @@ export function Assets() {
     }
   };
 
-  const { data: me } = useAuth();
-  const loggedIn = Boolean(me?.logged_in);
-
   if (!themeSettings.isReady) {
     return (
       <div className="flex h-[60vh] items-center justify-center">
@@ -199,14 +197,23 @@ export function Assets() {
     );
   }
 
-  // 两个入口都关闭或对访客隐藏资产时，未登录访客直连 URL 回首页。
-  if (
-    (!themeSettings.showCostSummary && !themeSettings.showCostSummaryFloatingButton) ||
-    (!loggedIn && !themeSettings.showPriceForGuests)
-  ) {
-    return <Navigate to="/" replace />;
+  if (!themeSettings.showPriceForGuests || !isPriceVisible) {
+    return (
+      <div className="flex min-h-[50vh] flex-col items-center justify-center gap-4 text-center px-4">
+        <h1 className="text-lg font-semibold">资产统计</h1>
+        <p className="text-sm text-(--text-secondary)">
+          {themeSettings.showPriceForGuests ? "费用已隐藏，关闭截图防窥后查看。" : "站长尚未公开资产费用。"}
+        </p>
+        {themeSettings.showPriceForGuests && (
+          <button type="button" className="control-button px-4 py-2" onClick={togglePriceVisibility}>显示已公开费用</button>
+        )}
+        <Link to="/" className="control-button px-4 py-2 text-sm">返回首页</Link>
+      </div>
+    );
   }
 
+  const hasCostData = summary?.details.some((detail) => detail.counted || detail.note === "免费") ?? false;
+  const missingCostCount = summary?.details.filter(detail => !detail.counted && detail.note !== "免费" && detail.note !== "已忽略").length ?? 0;
   const hasPremium = summary?.details.some((detail) => detail.premiumCny !== 0) ?? false;
   const ledgerRows: Array<{
     label: string;
@@ -214,8 +221,8 @@ export function Assets() {
     tone?: string;
     title?: string;
   }> = [
-    { label: "年化总支出", value: summary ? formatCnyMoney(summary.totalCny) : "--" },
-    { label: "月均支出", value: summary ? formatCnyMoney(summary.monthlyCny) : "--" },
+    { label: "年化总支出", value: summary && hasCostData ? formatCnyMoney(summary.totalCny) : "--" },
+    { label: "月均支出", value: summary && hasCostData ? formatCnyMoney(summary.monthlyCny) : "--" },
     ...(summary != null && hasPremium
       ? [
           {
@@ -277,7 +284,7 @@ export function Assets() {
       {nodes.length === 0 ? (
         <div className="flex h-[40vh] flex-col items-center justify-center gap-2 text-(--text-tertiary)">
           <span className="text-[15px]">暂无节点数据</span>
-          <span className="text-[12px]">等待后端推送或前往管理后台添加</span>
+          <span className="text-[12px]">请确认已配置主控，且展示 Token 有节点读取权限</span>
         </div>
       ) : (
         <>
@@ -289,7 +296,7 @@ export function Assets() {
               <span className="assets-eyebrow" title="按各节点账单价格折算的剩余价值，不含收购溢价">
                 剩余价值
               </span>
-              <HeroMoney value={summary ? summary.remainingCny : null} />
+              {hasCostData ? <HeroMoney value={summary ? summary.remainingCny : null} /> : <span className="assets-hero-value">暂无费用数据</span>}
             </div>
             <dl className="assets-ledger">
               {ledgerRows.map((row) => (
@@ -300,6 +307,8 @@ export function Assets() {
               ))}
             </dl>
           </section>
+
+          {missingCostCount > 0 && <p role="status" className="text-[12px] text-(--text-secondary)">{missingCostCount} 台节点的费用数据不完整或无读取权限，未计入汇总；具体原因见明细。</p>}
 
           <div className="assets-section-head">
             <span className="assets-eyebrow">明细</span>

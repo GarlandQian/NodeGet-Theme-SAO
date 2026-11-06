@@ -37,6 +37,8 @@ const looseBool = z
 export const NodeInfoSchema = z
   .object({
     uuid: z.string(),
+    source_id: z.string().optional(),
+    source_name: z.string().optional(),
     name: looseString.default(""),
     group: z.union([z.string(), z.number()]).nullish().transform((v) => (v == null ? "" : String(v))),
     region: z.union([z.string(), z.number()]).nullish().transform((v) => (v == null ? "" : String(v))),
@@ -86,6 +88,7 @@ export interface NodeRealtime {
 /** 展示用模型:扁平化的节点信息 + 实时指标 + 在线标志。 */
 export interface NodeMetrics {
   online: boolean | null;
+  dataStatus?: string;
   cpuPct: number;
   ramUsed: number;
   ramTotal: number;
@@ -101,6 +104,7 @@ export interface NodeMetrics {
   trafficDown: number;
   cycleUp?: number | null;
   cycleDown?: number | null;
+  cyclePartial?: boolean;
   uptime: number;
   load1: number;
   load5: number;
@@ -124,7 +128,7 @@ export type MatrixBootEffect =
   | "divergence-flux";
 
 
-/** 用户自定义点阵预设（云端存储） */
+/** 用户自定义点阵预设（浏览器本地保存，可导入导出） */
 export interface UserMatrixPreset {
   id: string;
   name: string;
@@ -183,12 +187,10 @@ export interface ThemeSettings {
   defaultAppearance?: "system" | "light" | "dark";
   desktopNodeViewMode?: "large" | "compact" | "mini" | "list";
   mobileNodeViewMode?: "large" | "compact" | "mini" | "list";
-  enableAdminButton?: boolean;
   showPingChart?: boolean;
   homepagePingBindings?: Record<string, string[]>;
   enableHomepageMultiPing?: boolean;
   homepageMultiPingTaskIds?: number[];
-  fakePingForUnbound?: boolean;
   pingLatencyThresholds?: Partial<PingLatencyThresholds>;
   pingLatencyColors?: Partial<PingLatencyColors>;
   pingLossThresholds?: Partial<PingLossThresholds>;
@@ -212,7 +214,7 @@ export interface ThemeSettings {
   matrixBootEffect?: MatrixBootEffect;
   /** 自定义方格矩阵开场点阵图案（0~99的像素序号数组），为 null 或空时回退为默认 SAO。 */
   matrixCustomPattern?: number[] | null;
-  /** 云端保存的用户自定义点阵预设列表（跨设备漫游）。 */
+  /** 浏览器本地保存的用户自定义点阵预设列表。 */
   matrixUserPresets?: UserMatrixPreset[];
   homeGroupOrder?: string[];
   enableHomeSort?: boolean;
@@ -250,43 +252,13 @@ export const PublicConfigSchema = z
     sitename: z.string().default(""),
     description: z.string().default(""),
     theme: z.string().default(""),
-    allow_cors: z.boolean().default(false),
-    disable_password_login: z.boolean().default(false),
-    oauth_enable: z.boolean().default(false),
-    private_site: z.boolean().default(false),
-    record_enabled: z.boolean().default(true),
-    record_preserve_time: z.number().default(0),
-    ping_record_preserve_time: z.number().default(0),
-    metric_retention_days: z.number().default(0),
-    custom_head: z.string().default(""),
-    custom_body: z.string().default(""),
+    site_logo: z.string().default(""),
+    footer: z.string().default(""),
     theme_settings: z.record(z.string(), z.unknown()).default({}),
   })
   .passthrough();
 
 export type PublicConfig = z.output<typeof PublicConfigSchema>;
-
-export const AdminClientSchema = z
-  .object({
-    uuid: z.string(),
-    name: looseString.default(""),
-    group: z.union([z.string(), z.number()]).nullish().transform((v) => (v == null ? "" : String(v))),
-    region: z.union([z.string(), z.number()]).nullish().transform((v) => (v == null ? "" : String(v))),
-    weight: looseNumber.default(0),
-  })
-  .passthrough();
-
-export type AdminClient = z.output<typeof AdminClientSchema>;
-
-export const MeSchema = z
-  .object({
-    logged_in: z.boolean().default(false),
-    username: z.string().default(""),
-    uuid: z.string().default(""),
-  })
-  .passthrough();
-
-export type Me = z.output<typeof MeSchema>;
 
 export const LoadRecordSchema = z
   .object({
@@ -306,6 +278,7 @@ export const LoadRecordSchema = z
     net_total_down: z.number().default(0),
     process: z.number().default(0),
     connections: z.number().default(0),
+    connections_tcp: z.number().optional(),
     connections_udp: z.number().default(0),
     time: z.union([z.string(), z.number()]),
     client: z.string().default(""),
@@ -354,12 +327,14 @@ export interface PingRecordsResponse {
   count: number;
   records: PingRecord[];
   tasks: PingTask[];
-  /** 新 metric API 实际采用的聚合间隔，用于图表正确识别长区间连续点。 */
+  /** 原生任务记录实际采用的展示间隔，用于图表识别长区间连续点。 */
   intervalSeconds?: number;
   rangeStartMs?: number;
   rangeEndMs?: number;
-  /** 新 metric API 返回的服务端区间统计；旧后端回退时不存在。 */
+  /** 从 NodeGet 原始任务记录计算的完整区间统计。 */
   stats?: PingTaskStats[];
+  quality?: "partial";
+  message?: string;
 }
 
 export interface PingTaskStats {
@@ -383,18 +358,24 @@ export interface PingTaskStats {
 
 export type PingOverviewTaskLoadState = "pending" | "ready" | "error";
 
+export interface PingDataIssue {
+  status: "partial" | "forbidden" | "unavailable" | "error";
+  message: string;
+}
+
 export interface PingOverviewItem {
   client: string;
   isAssigned: boolean;
-  /** 当前任务本轮请求状态；模拟 Ping 不设置此字段。 */
+  /** 当前原生任务本轮请求状态。 */
   loadState?: PingOverviewTaskLoadState;
+  dataIssue?: PingDataIssue;
   lastValue: number | null;
-  /** metric API 聚合桶的真实宽度；旧 records 接口没有该字段。 */
+  /** 任务样本聚合窗口的实际宽度。 */
   metricIntervalMs?: number;
   samples: Array<{
     time: number;
     value: number;
-    /** 聚合 metric 点覆盖的原始样本数。 */
+    /** 聚合点覆盖的原始任务样本数。 */
     count?: number;
     /** 聚合窗口的丢包百分比。 */
     loss?: number | null;

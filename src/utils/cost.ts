@@ -1,4 +1,4 @@
-import type { NodeInfo } from "@/types/komari";
+import type { NodeInfo } from "@/types/models";
 import { normalizeBillingCycle } from "@/utils/billing";
 import { fetchWithTimeout } from "@/utils/abort";
 import { resolveExpireTimestamp } from "@/utils/format";
@@ -32,7 +32,7 @@ export const COST_RATE_PRESETS: CostRatePreset[] = [
 ];
 const RATE_CACHE_TTL_MS = 60 * 60 * 1000;
 // Legacy key retained so existing users keep their cached exchange rates after the rename.
-const RATE_CACHE_KEY_PREFIX = "komaritheme:cost-rates:";
+const RATE_CACHE_KEY_PREFIX = "nodeget-sao:cost-rates:";
 const RATE_REQUEST_TIMEOUT_MS = 10_000;
 
 const CURRENCY_ALIASES: Record<string, string> = {
@@ -539,6 +539,10 @@ export function calculateCostSummary(
       continue;
     }
 
+    if (node.price_configured === false || node.metadata_status === "forbidden") {
+      details.push({ ...baseDetail, counted: false, note: node.metadata_status === "forbidden" ? "无权读取费用" : "未配置费用" });
+      continue;
+    }
     const price = Number(node.price) || 0;
     if (price <= 0) {
       premiumTotalCny += premium;

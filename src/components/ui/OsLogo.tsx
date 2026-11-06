@@ -228,7 +228,7 @@ export const OsLogo = memo(function OsLogo({
   return (
     <img
       className="os-logo"
-      src={src}
+      src={`${import.meta.env.BASE_URL}${src.slice(1)}`}
       alt={os.name}
       title={os.name}
       width={size}

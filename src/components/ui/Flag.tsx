@@ -59,7 +59,7 @@ export function Flag({ region, size = 14 }: FlagProps) {
       }}
     >
       <img
-        src={src}
+        src={`${import.meta.env.BASE_URL}${src.slice(1)}`}
         alt={alt}
         loading="lazy"
         className="w-full h-full rounded-full pointer-events-none"

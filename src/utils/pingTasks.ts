@@ -2,9 +2,6 @@ export type HomepagePingTaskBindings = Record<string, string[]>;
 
 export const HOMEPAGE_MULTI_PING_MIN_COUNT = 1;
 
-/** 兼容旧版 3 线路常量 */
-export const HOMEPAGE_MULTI_PING_TASK_COUNT = 3;
-
 /** 多线路模式的任务选够了没有。首页消费方与设置页的校验共用这一条口径。 */
 export function isHomepageMultiPingConfigured(taskIds: readonly number[]): boolean {
   return taskIds.length >= HOMEPAGE_MULTI_PING_MIN_COUNT;
@@ -15,9 +12,6 @@ export function isFallbackTaskName(name?: string | null): boolean {
   if (!name) return true;
   return /^(任务|线路)\s*#\d+$/i.test(name.trim());
 }
-
-/** 默认三条线路（1, 2, 3） */
-export const DEFAULT_HOMEPAGE_MULTI_PING_TASK_IDS: readonly number[] = [1, 2, 3];
 
 const invertedBindingsCache = new WeakMap<HomepagePingTaskBindings, Map<string, number>>();
 

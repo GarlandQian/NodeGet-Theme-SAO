@@ -1,9 +1,9 @@
 import { useMemo } from "react";
-import { useAuth } from "@/hooks/useAuth";
+import { useSourceSelection } from "@/hooks/useSourceSelection";
 import { useAllNodeMeta } from "@/hooks/useNode";
 import { useThemeSettings } from "@/hooks/useThemeSettings";
 import { collectMatchingNodeUuids } from "@/utils/nodeIdentity";
-import type { NodeInfo } from "@/types/komari";
+import type { NodeInfo } from "@/types/models";
 
 let cachedMeta: NodeInfo[] | null = null;
 let cachedHidden: string[] | null = null;
@@ -29,18 +29,17 @@ export function useHiddenNodeUuids(): Set<string> {
 }
 
 /**
- * 全站统一的节点可见性口径:后台 hidden 仅登录管理员可见,主题级隐藏对所有人剔除,
- * auth 未就绪按访客处理(fail-closed)。
+ * 公开页面统一排除隐藏节点，并应用主控筛选。
  */
 export function useVisibleNodes(): NodeInfo[] {
   const allNodes = useAllNodeMeta();
-  const { data: me } = useAuth();
+  const selectedSource = useSourceSelection();
   const hiddenUuids = useHiddenNodeUuids();
   return useMemo(
     () =>
       allNodes.filter(
-        (node) => (me?.logged_in === true || !node.hidden) && !hiddenUuids.has(node.uuid),
+        (node) => !node.hidden && !hiddenUuids.has(node.uuid) && (!selectedSource || node.source_id === selectedSource),
       ),
-    [allNodes, hiddenUuids, me?.logged_in],
+    [allNodes, hiddenUuids, selectedSource],
   );
 }

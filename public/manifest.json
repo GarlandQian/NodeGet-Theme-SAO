@@ -1,17 +1,19 @@
 {
-  "id": "/",
-  "name": "Komari Monitor",
-  "short_name": "Komari",
-  "description": "A Komari server monitor.",
+  "id": "./",
+  "name": "NodeGet-Theme-SAO",
+  "short_name": "SAO",
+  "description": "SAO dashboard theme for NodeGet.",
   "lang": "zh-CN",
-  "start_url": "/",
-  "scope": "/",
+  "start_url": "./#/",
+  "scope": "./",
   "display": "standalone",
   "background_color": "#000000",
   "theme_color": "#000000",
   "icons": [
     {
-      "src": "/favicon.ico",
+      "src": "./favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
       "purpose": "any"
     }
   ]

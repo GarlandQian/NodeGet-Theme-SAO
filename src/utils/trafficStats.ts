@@ -1,4 +1,4 @@
-import type { LoadRecord } from "@/types/komari";
+import type { LoadRecord } from "@/types/models";
 
 export const TRAFFIC_UP_METRIC = "traffic.up";
 export const TRAFFIC_DOWN_METRIC = "traffic.down";
@@ -38,6 +38,10 @@ export interface TodayTrafficStat {
   peakDownAt: number | null;
   sampleCount: number;
   hasSamples: boolean;
+  trafficAvailable?: boolean;
+  ratesAvailable?: boolean;
+  partial?: boolean;
+  statusMessage?: string;
 }
 
 export interface TodayTrafficSample {
@@ -207,4 +211,12 @@ export function buildTodayTrafficRecordSamples(
       down: Math.max(0, Number.isFinite(record.net_in) ? record.net_in : 0),
     }))
     .sort((left, right) => right.timeMs - left.timeMs);
+}
+
+export function hasTrafficData(stat: TodayTrafficStat | undefined | null): boolean {
+  return Boolean(stat?.hasSamples && stat.trafficAvailable !== false);
+}
+
+export function hasRateData(stat: TodayTrafficStat | undefined | null): boolean {
+  return Boolean(stat?.hasSamples && stat.ratesAvailable !== false);
 }

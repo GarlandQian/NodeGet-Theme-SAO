@@ -18,28 +18,18 @@ import {
 } from "@tanstack/react-query";
 import { useMinuteClock } from "@/hooks/useClock";
 import {
-  getTodayTrafficRecordRangeHours,
   getTodayTrafficRefreshInterval,
   selectActiveTodayTrafficUuids,
 } from "@/hooks/todayTrafficQueryPolicy";
-import {
-  getLoadRecords,
-  getTodayTrafficMetrics,
-  MetricApiUnavailableError,
-  warnDegradedOnce,
-} from "@/services/api";
+import { getTodayTrafficMetrics } from "@/services/api";
 import {
   buildTodayTrafficMetricSamples,
-  buildTodayTrafficRecordSamples,
   summarizeTodayTrafficMetrics,
-  summarizeTodayTrafficRecords,
   type TodayTrafficSample,
   type TodayTrafficStat,
 } from "@/utils/trafficStats";
 
-const FALLBACK_CONCURRENCY = 8;
-const OPTIONAL_METRIC_TIMEOUT_MS = 6_000;
-const FALLBACK_REQUEST_TIMEOUT_MS = 8_000;
+const TRAFFIC_REQUEST_TIMEOUT_MS = 45_000;
 type TodayTrafficQueryMode = "full" | "summary";
 
 export interface TodayTrafficStatsResponse {
@@ -156,7 +146,7 @@ const TodayTrafficStatsContext = createContext<TodayTrafficStatsContextValue | n
 
 /**
  * 首页卡片共享的今日流量上下文：默认不请求；弹层打开后按活跃节点分别查询，
- * 避免旧后端在无人交互时放大请求，也避免悬浮切换改变已有节点的缓存键。
+ * 避免无人查看时向主控发送不必要的请求，也避免悬浮切换改变已有节点的缓存键。
  */
 export function TodayTrafficStatsProvider({
   uuids,
@@ -284,63 +274,6 @@ function localDayStartMs(now: number) {
   return start.getTime();
 }
 
-async function loadRecordFallback(
-  uuids: string[],
-  startMs: number,
-  endMs: number,
-  signal: AbortSignal,
-  mode: TodayTrafficQueryMode,
-): Promise<Pick<TodayTrafficStatsResponse, "rows" | "samplesByUuid">> {
-  throwIfSignalAborted(signal);
-  const rows: TodayTrafficStat[] = [];
-  const samplesByUuid: Record<string, TodayTrafficSample[]> = {};
-  const rangeHours = getTodayTrafficRecordRangeHours(startMs, endMs);
-  let failureCount = 0;
-  let firstFailure: unknown = null;
-  for (let index = 0; index < uuids.length; index += FALLBACK_CONCURRENCY) {
-    const batch = uuids.slice(index, index + FALLBACK_CONCURRENCY);
-    const responses = await Promise.allSettled(
-      batch.map(async (uuid) => {
-        const data = await getLoadRecords(uuid, rangeHours, {
-          signal,
-          timeout: FALLBACK_REQUEST_TIMEOUT_MS,
-          // 聚合接口刚刚失败过，兼容路径直接读 records，避免每台节点重复探测。
-          skipMetricQuery: true,
-        });
-        return {
-          row: summarizeTodayTrafficRecords(uuid, data.records, startMs, endMs),
-          samples:
-            mode === "full"
-              ? buildTodayTrafficRecordSamples(data.records, startMs, endMs)
-              : undefined,
-        };
-      }),
-    );
-    throwIfSignalAborted(signal);
-    for (let offset = 0; offset < responses.length; offset += 1) {
-      const uuid = batch[offset];
-      const response = responses[offset];
-      if (!uuid || !response) continue;
-      // 单节点失败按空数据占位,不拖垮整页;全军覆没才让整页进入错误态。
-      if (response.status === "rejected") {
-        failureCount += 1;
-        firstFailure ??= response.reason;
-        rows.push(summarizeTodayTrafficRecords(uuid, [], startMs, endMs));
-        if (mode === "full") samplesByUuid[uuid] = [];
-        continue;
-      }
-      rows.push(response.value.row);
-      if (response.value.samples) samplesByUuid[uuid] = response.value.samples;
-    }
-  }
-  if (failureCount > 0 && failureCount === uuids.length) {
-    throw firstFailure instanceof Error
-      ? firstFailure
-      : new Error("today traffic fallback failed for all nodes");
-  }
-  return { rows, samplesByUuid };
-}
-
 function getTodayTrafficQueryOptions(
   uuids: string[],
   now: number,
@@ -354,49 +287,29 @@ function getTodayTrafficQueryOptions(
     queryKey: ["traffic-stats", "today", startMs, mode, uuidSignature],
     queryFn: async ({ signal }): Promise<TodayTrafficStatsResponse> => {
       const endMs = Date.now();
-      try {
-        const data = await getTodayTrafficMetrics(stableUuids, startMs, endMs, {
-          signal,
-          timeout: OPTIONAL_METRIC_TIMEOUT_MS,
-        });
-        return {
-          rows: summarizeTodayTrafficMetrics(data.series, stableUuids),
-          samplesByUuid:
-            mode === "full"
-              ? Object.fromEntries(
-                  stableUuids.map((uuid) => [
-                    uuid,
-                    buildTodayTrafficMetricSamples(data.series, uuid),
-                  ]),
-                )
-              : {},
-          rangeStartMs: data.rangeStartMs,
-          rangeEndMs: data.rangeEndMs,
-          intervalSeconds: data.intervalSeconds,
-          source: "metrics",
-        };
-      } catch (error) {
-        if (signal.aborted) throw error;
-        warnDegradedOnce(
-          "today-traffic",
-          error instanceof MetricApiUnavailableError
-            ? "检测到旧版后端,今日流量已使用逐节点 records 统计"
-            : "今日流量 metrics 查询异常,已回退逐节点 records 统计",
-        );
-        const fallback = await loadRecordFallback(
-          stableUuids,
-          startMs,
-          endMs,
-          signal,
-          mode,
-        );
-        return {
-          ...fallback,
-          rangeStartMs: startMs,
-          rangeEndMs: endMs,
-          source: "records",
-        };
-      }
+      const data = await getTodayTrafficMetrics(stableUuids, startMs, endMs, {
+        signal,
+        timeout: TRAFFIC_REQUEST_TIMEOUT_MS,
+      });
+      const hasPoints = (uuid: string, key: string) => data.series.some((item) =>
+        item.client === uuid && item.metricKey === key && item.points.some((point) =>
+          point.count > 0 && point.value != null && Number.isFinite(point.value)));
+      return {
+        rows: summarizeTodayTrafficMetrics(data.series, stableUuids).map((stat) => ({
+          ...stat,
+          trafficAvailable: hasPoints(stat.uuid, "traffic.up") && hasPoints(stat.uuid, "traffic.down"),
+          ratesAvailable: hasPoints(stat.uuid, "net.out.rate") && hasPoints(stat.uuid, "net.in.rate"),
+          partial: data.issues?.[stat.uuid]?.status === "partial",
+          statusMessage: data.issues?.[stat.uuid]?.message,
+        })),
+        samplesByUuid: mode === "full"
+          ? Object.fromEntries(stableUuids.map((uuid) => [uuid, buildTodayTrafficMetricSamples(data.series, uuid)]))
+          : {},
+        rangeStartMs: data.rangeStartMs,
+        rangeEndMs: data.rangeEndMs,
+        intervalSeconds: data.intervalSeconds,
+        source: "metrics",
+      };
     },
     enabled: stableUuids.length > 0,
     placeholderData: keepPreviousData,

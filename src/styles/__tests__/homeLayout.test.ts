@@ -70,7 +70,8 @@ describe("home responsive layout contracts", () => {
     );
     expect(loadingBranch).not.toContain("<HomeBrand");
     expect(loadingBranch).not.toContain("<Spinner");
-    expect(homeSource).toContain("const homeReady = themeSettings.isReady && storeHydrated");
+    // Local theme controls remain available even if every source fails to load.
+    expect(homeSource).toContain("const homeReady = themeSettings.isReady;");
     expect(homeSource).toContain("{homeReady && <FloatingControls");
   });
 

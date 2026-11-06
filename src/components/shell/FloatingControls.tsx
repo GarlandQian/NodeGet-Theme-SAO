@@ -10,7 +10,6 @@ import {
   List,
   Monitor,
   Palette,
-  Settings,
   SlidersHorizontal,
   Square,
   Sun,
@@ -20,7 +19,6 @@ import { Link } from "react-router-dom";
 import { usePreferences } from "@/hooks/usePreferences";
 import { useViewMode } from "@/hooks/useViewMode";
 import { useNodeStoreStatus } from "@/hooks/useNode";
-import { useAuth } from "@/hooks/useAuth";
 import { useThemeSettings } from "@/hooks/useThemeSettings";
 import { usePriceVisibility } from "@/hooks/usePriceVisibility";
 import type { NodeViewMode } from "@/utils/themeSettings";
@@ -62,20 +60,16 @@ export function FloatingControls({
 }) {
   const { appearance, setAppearance } = usePreferences();
   const { mode, nextMode, toggleMode } = useViewMode();
-  const { data: me } = useAuth();
   const themeSettings = useThemeSettings();
-  const { isPriceVisible, togglePriceVisibility } = usePriceVisibility();
+  const { isPriceVisible, togglePriceVisibility, canToggle } = usePriceVisibility();
   const { failureStreak } = useNodeStoreStatus();
   const [collapsed, setCollapsed] = useState(true);
   const [colorsOpen, setColorsOpen] = useState(false);
   const [colorsMounted, setColorsMounted] = useState(false);
   const settingsReady = themeSettings.isReady;
-  const showAdmin = settingsReady && themeSettings.enableAdminButton;
-  // 主题管理入口与配色取色器都仅对登录管理员开放（配色存后端、全局生效）。
-  const loggedIn = Boolean(me?.logged_in);
-  const showThemeManage = loggedIn;
-  const showColorPicker = loggedIn;
-  const showPriceToggle = loggedIn;
+  const showThemeManage = settingsReady;
+  const showColorPicker = settingsReady;
+  const showPriceToggle = canToggle;
   const showSyncWarning = failureStreak >= 2;
   const hiddenTabIndex = collapsed ? -1 : undefined;
   const ToggleIcon = collapsed ? ChevronLeft : ChevronRight;
@@ -208,17 +202,6 @@ export function FloatingControls({
               >
                 <SlidersHorizontal size={16} />
               </Link>
-            )}
-            {showAdmin && (
-              <a
-                href="/admin"
-                aria-label={me?.logged_in ? "管理" : "后台登录"}
-                title={me?.logged_in ? "管理" : "后台登录"}
-                tabIndex={hiddenTabIndex}
-                className="control-button grid h-9 w-9 place-items-center"
-              >
-                <Settings size={16} />
-              </a>
             )}
           </div>
           <button

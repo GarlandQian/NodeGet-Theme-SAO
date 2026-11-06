@@ -1,3 +1,4 @@
+import { NodeUnavailable } from "./NodeUnavailable";
 import { memo, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { Link } from "react-router-dom";
@@ -30,6 +31,7 @@ import {
 } from "@/utils/metricTone";
 import { supportsFineHover } from "@/utils/mediaQuery";
 import { formatHealthBucketTooltip } from "./pingBucketText";
+import { PingDataNotice } from "./PingDataNotice";
 import { MultiPingStatus } from "./MultiPingStatus";
 import {
   formatCompactBillingCycle,
@@ -50,7 +52,7 @@ import type {
   PingOverviewBucket,
   PingOverviewItem,
   TrafficTrendSample,
-} from "@/types/komari";
+} from "@/types/models";
 import type { ByteRateDisplay } from "@/utils/format";
 import type { TrafficDisplay } from "@/utils/traffic";
 
@@ -308,7 +310,7 @@ function CompactHealthItem({
   children,
 }: {
   icon: ReactNode;
-  label: string;
+  label: ReactNode;
   value: string;
   unit?: string;
   color: string;
@@ -555,7 +557,7 @@ function CompactNodeInfoStrip({
           ) : (
             <CompactInfoRow
               icon={<RefreshCw size={11} strokeWidth={2.2} />}
-              // 当价格不可见时（未向访客公开或管理员临时隐藏），第二行显示极简付费周期（如 年付/月付）
+              // 当价格不可见时（站点未公开或当前屏幕已隐藏），第二行显示极简付费周期（如 年付/月付）
               value={formatCompactBillingCycle(node.billing_cycle, node.price)}
               color="var(--text-tertiary)"
             />
@@ -658,11 +660,13 @@ const CompactNodeHealth = memo(function CompactNodeHealth({
   pingLoading: boolean;
   pingError: boolean;
 }) {
-  // 已绑定但无样本时显示"无样本",未绑定时显示"未配置" —— 见 pingEmptyLabels。
+  // 区分未配置、无样本、最近一次超时和读取失败。
   const { text: emptyText } = pingEmptyLabels(
     hasRealHomepagePingBinding,
     pingLoading,
     pingError,
+    ping.dataIssue,
+    ping.loss != null,
   );
   return (
     <div
@@ -676,7 +680,7 @@ const CompactNodeHealth = memo(function CompactNodeHealth({
     >
       <CompactHealthItem
         icon={<Clock3 size={12} />}
-        label="延迟"
+        label={<>延迟<PingDataNotice issue={ping.dataIssue} /></>}
         value={ping.lastValue != null ? Math.round(ping.lastValue).toString() : emptyText}
         unit={ping.lastValue != null ? "ms" : undefined}
         color={latencyColor}
@@ -715,6 +719,10 @@ export const CompactNodeCard = memo(function CompactNodeCard({
 
   if (!model.node) {
     return <div className="compact-node-card animate-pulse" aria-busy />;
+  }
+
+  if (model.node.online === null) {
+    return <NodeUnavailable node={model.node} className="compact-node-card" />;
   }
 
   const {

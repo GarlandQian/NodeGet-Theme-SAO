@@ -20,7 +20,7 @@ describe("formatBillingCycle", () => {
     expect(formatBillingCycle(360)).toBe("年");
   });
 
-  it("renders whole-year multiples in Komari Chinese naming", () => {
+  it("renders whole-year multiples in Chinese labels", () => {
     expect(formatBillingCycle(730)).toBe("两年");
     expect(formatBillingCycle(1095)).toBe("三年");
     expect(formatBillingCycle(1460)).toBe("四年");

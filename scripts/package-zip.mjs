@@ -3,12 +3,13 @@ import { dirname, join, relative, resolve } from "node:path";
 import { finished } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 import zlib from "node:zlib";
+import { readConfigTemplate } from "./theme-config.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = resolve(__dirname, "..");
-const manifest = JSON.parse(readFileSync(resolve(root, "komari-theme.json"), "utf8"));
+const manifest = JSON.parse(readFileSync(resolve(root, "dist/nodeget-theme.json"), "utf8"));
 const version = manifest.version ?? "0.0.0";
-const packageName = manifest.name ?? "Komari-Theme-SAO";
+const packageName = manifest.name ?? "NodeGet-Theme-SAO";
 const outPath = resolve(root, `${packageName}-v${version}.zip`);
 const ZIP_VERSION = 20;
 const UTF8_FLAG = 0x0800;
@@ -59,18 +60,15 @@ for (const [path, hint] of [
   }
 }
 
-const entries = [
-  { path: "komari-theme.json", full: resolve(root, "komari-theme.json") },
-  { path: "preview.png", full: previewPath },
-  ...walk(distDir, root),
-];
+const entries = walk(distDir).filter((entry) => !entry.path.endsWith(".zip"));
+const distributionConfig = Buffer.from(`${JSON.stringify(readConfigTemplate(root), null, 2)}\n`);
 
 const stream = createWriteStream(outPath);
 let offset = 0;
 const cdEntries = [];
 
 for (const entry of entries) {
-  const data = readFileSync(entry.full);
+  const data = entry.path === "config.json" ? distributionConfig : readFileSync(entry.full);
   const deflated = zlib.deflateRawSync(data, { level: 9 });
   const nameBuf = Buffer.from(entry.path.replace(/\\/g, "/"), "utf8");
   const crc = crc32(data);

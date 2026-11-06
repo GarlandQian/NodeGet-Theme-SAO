@@ -1,3 +1,4 @@
+import { hasTrafficData } from "@/utils/trafficStats";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -8,7 +9,7 @@ import {
 import { Flag } from "@/components/ui/Flag";
 import { OverviewStatCard } from "./OverviewStatCard";
 import { FloatingAssetButton } from "@/components/cost/FloatingAssetButton";
-import { useAuth } from "@/hooks/useAuth";
+import { useSourceSelection } from "@/hooks/useSourceSelection";
 import {
   useAllNodeMeta,
   useHomeNodeSummaries,
@@ -58,7 +59,7 @@ import {
   type MatrixColorTheme,
   type MatrixBootEffect,
 } from "@/utils/themeSettings";
-import type { OverviewCardId } from "@/types/komari";
+import type { OverviewCardId } from "@/types/models";
 import type { HomeNodeSummary } from "@/services/wsStore";
 import { getRenewalReminders, type RenewalReminderSource } from "@/utils/renewalReminder";
 import { DiaTextReveal } from "@/components/ui/DiaTextReveal";
@@ -150,6 +151,9 @@ function getTimeGreetingInfo(
   }
 
   // 2. 暂未连接服务器
+  if (totalNodes > onlineNodes + offlineNodes) {
+    return { greeting, subtitle: "部分节点状态未知，汇总仅包含当前可读取的数据。" };
+  }
   if (totalNodes === 0) {
     return {
       greeting,
@@ -261,7 +265,8 @@ const HomeOverviewCards = memo(function HomeOverviewCards({
       })
       : null;
 
-  const isAllHealthy = overview.offlineNodes === 0 && overview.totalNodes > 0;
+  const unknownNodes = overview.totalNodes - overview.onlineNodes - overview.offlineNodes;
+  const isAllHealthy = overview.onlineNodes === overview.totalNodes && overview.totalNodes > 0;
 
   const renewalReminders = getRenewalReminders(renewalNodes, Date.now(), {
     requireOnlineForExpired: true,
@@ -347,7 +352,7 @@ const HomeOverviewCards = memo(function HomeOverviewCards({
             <div className="flex items-center gap-2 flex-wrap justify-end">
               <span className={`mao-status-pill ${isAllHealthy ? "is-healthy" : "is-warning"}`}>
                 <span className="mao-status-dot" />
-                {isAllHealthy ? "状态健康" : overview.totalNodes === 0 ? "未连接" : `存在离线 (${overview.offlineNodes})`}
+                {isAllHealthy ? "状态健康" : overview.totalNodes === 0 ? "未连接" : unknownNodes > 0 ? `状态未知 (${unknownNodes})` : `存在离线 (${overview.offlineNodes})`}
               </span>
               {bandwidthRating && (
                 <span
@@ -807,13 +812,13 @@ export function NodeGrid() {
   const nodeOnlineSummaries = useNodeOnlineSummaries();
   const allMeta = useAllNodeMeta();
   const { hydrated: storeHydrated, nodeInfoError } = useNodeStoreStatus();
-  const { data: me } = useAuth();
+  const selectedSource = useSourceSelection();
   const { data: publicConfig } = usePublicConfig();
   const siteName = publicConfig?.sitename?.trim() || "节点概览";
   const themeSettings = useThemeSettings();
   const { mode } = useViewMode();
   const sort = useHomeSort();
-  // enableHomeSort 控制访客能否改排序;关闭时无视 session 覆盖、直接用管理员默认序(默认仍是 weight)。
+  // enableHomeSort 控制是否允许临时排序;关闭时无视 session 覆盖、直接用主题默认序(默认仍是 weight)。
   const sortEnabled = themeSettings.isReady && themeSettings.enableHomeSort;
   const sortField = sortEnabled ? sort.field : themeSettings.homeSortField;
   const sortDirection = sortEnabled ? sort.direction : themeSettings.homeSortDirection;
@@ -835,17 +840,17 @@ export function NodeGrid() {
   const visibleNodes = useMemo(
     () =>
       nodes.filter(
-        (node) => (me?.logged_in === true || !node.hidden) && !hiddenUuids.has(node.uuid),
+        (node) => !node.hidden && !hiddenUuids.has(node.uuid) && (!selectedSource || node.source_id === selectedSource),
       ),
-    [me?.logged_in, nodes, hiddenUuids],
+    [selectedSource, nodes, hiddenUuids],
   );
   // 资产统计与卡片使用同一可见性规则，避免泄露隐藏节点信息。
   const visibleMeta = useMemo(
     () =>
       allMeta.filter(
-        (node) => (me?.logged_in === true || !node.hidden) && !hiddenUuids.has(node.uuid),
+        (node) => !node.hidden && !hiddenUuids.has(node.uuid) && (!selectedSource || node.source_id === selectedSource),
       ),
-    [allMeta, me?.logged_in, hiddenUuids],
+    [allMeta, selectedSource, hiddenUuids],
   );
   const renewalNodes = useMemo<RenewalReminderSource[]>(() => {
     const onlineByUuid = new Map(
@@ -867,18 +872,16 @@ export function NodeGrid() {
   const todayTrafficQuery = useTodayTrafficStats(trafficUuids, todayTrafficClock, "summary");
   const latestTrafficTotal = useMemo(() => {
     if (!todayTrafficQuery.data) return null;
-    return todayTrafficQuery.data.rows.reduce(
+    const available = todayTrafficQuery.data.rows.filter(hasTrafficData);
+    if (available.length === 0) return null;
+    return available.reduce(
       (sum, row) => sum + row.trafficUp + row.trafficDown,
       0,
     );
   }, [todayTrafficQuery.data]);
-  // 记忆锁定：一旦获取过有效数据，在用户未手动刷新页面的生命周期内永久记忆数值，
-  // 避免切出 APP 重新激活或后台静默刷新时因短暂 pending 退化为朦胧骨架屏
-  const lastTrafficTotalRef = useRef<number | null>(null);
-  if (latestTrafficTotal !== null) {
-    lastTrafficTotalRef.current = latestTrafficTotal;
-  }
-  const todayTrafficTotal = latestTrafficTotal ?? lastTrafficTotalRef.current;
+  // Query cache retains successful samples within one selection; never reuse another source's total.
+  const todayTrafficTotal = latestTrafficTotal;
+  const trafficIncomplete = todayTrafficQuery.isError || Boolean(todayTrafficQuery.data?.rows.some(row => !hasTrafficData(row) || row.partial));
   // 「名称」排序需要展示名(摘要无 name),从 meta 注入。
   const nameByUuid = useMemo(() => {
     const map = new Map<string, string>();
@@ -928,8 +931,10 @@ export function NodeGrid() {
       totalDiskTotal += node.diskTotal || 0;
       trafficUp += node.trafficUp;
       trafficDown += node.trafficDown;
-      netUp += node.netUp;
-      netDown += node.netDown;
+      if (node.online === true) {
+        netUp += node.netUp;
+        netDown += node.netDown;
+      }
     }
 
     for (const meta of visibleMeta) {
@@ -975,14 +980,13 @@ export function NodeGrid() {
   }, [visibleNodes, visibleMeta]);
   const showHomeOverview = themeSettings.isReady && themeSettings.showHomeOverview;
   const showTrafficPopover = themeSettings.isReady && themeSettings.showTodayTrafficPopover;
-  const loggedIn = Boolean(me?.logged_in);
-  const canAccessTraffic = loggedIn || themeSettings.showTrafficPageForGuests;
+  const canAccessTraffic = themeSettings.showTrafficPageForGuests;
   const showTrafficDetailButton =
     (themeSettings.isReady ? themeSettings.showTrafficPageButton : true) && canAccessTraffic;
   const hasNodes = visibleMeta.length > 0;
-  const canAccessAssets = loggedIn || themeSettings.showPriceForGuests;
+  const canAccessAssets = themeSettings.showPriceForGuests;
   // 卡内入口与悬浮入口互斥，避免重复操作入口。
-  const showAssetCard = showHomeOverview && hasNodes;
+  const showAssetCard = showHomeOverview && hasNodes && canAccessAssets;
   const showCostDetailButton =
     showAssetCard && themeSettings.isReady && themeSettings.showCostSummary && canAccessAssets;
   const showCostFloatingButton =
@@ -1192,7 +1196,10 @@ export function NodeGrid() {
     <>
       {showCostFloatingButton && <FloatingAssetButton />}
       <HomeBrand siteName={siteName} />
-      {showHomeOverview && (
+      {(visibleNodes.some(node => node.online === null) || trafficIncomplete) && (
+        <p role="status" className="mb-3 text-[12px] text-(--text-secondary)">部分监控或流量数据不可用，汇总可能不完整；缺失项未计入统计。</p>
+      )}
+      {showHomeOverview && visibleNodes.length > 0 && (
         <HomeOverviewCards
           overview={overview}
           dense={mode === "mini" || mode === "list"}
@@ -1200,13 +1207,13 @@ export function NodeGrid() {
           showDetailButton={showCostDetailButton}
           showAssetCard={showAssetCard}
           renewalNodes={renewalNodes}
-          costSummary={costSummary}
+          costSummary={costSummary?.details.some(detail => detail.counted || detail.note === "免费") ? costSummary : null}
           costLoading={costLoading}
           showOverviewRatings={themeSettings.showOverviewRatings}
           showBandwidthRating={themeSettings.showBandwidthRating}
           bandwidthRatingLabels={themeSettings.bandwidthRatingLabels}
           onWarmTraffic={warmTrafficPage}
-          username={me?.username || (me?.logged_in ? "Admin" : "Guest")}
+          username=""
           todayTrafficTotal={todayTrafficTotal}
           todayTrafficLoading={todayTrafficTotal === null && todayTrafficQuery.isPending}
           visibleNodes={visibleNodes}
@@ -1229,7 +1236,7 @@ export function NodeGrid() {
         {homeHeader}
         <div className="flex h-[40vh] flex-col items-center justify-center gap-2 text-(--text-tertiary)">
           <span className="text-[15px]">尚未连接到任何节点</span>
-          <span className="text-[12px]">等待后端推送或前往管理后台添加</span>
+          <span className="text-[12px]">当前主控筛选下暂无可展示的节点</span>
         </div>
       </>
     );

@@ -1,4 +1,4 @@
-import type { NodeInfo } from "@/types/komari";
+import type { NodeInfo } from "@/types/models";
 import { formatRenewalPrice } from "@/utils/billing";
 import { getExpireDaysRemaining, resolveExpireTimestamp } from "@/utils/format";
 

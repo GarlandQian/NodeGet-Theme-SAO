@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, type PointerEvent, type MouseEvent } from 
 import { useNavigate } from "react-router-dom";
 import { CircleDollarSign } from "lucide-react";
 
-const STORAGE_KEY = "komari-sao:cost-ball-pos";
+const STORAGE_KEY = "nodeget-sao:cost-ball-pos";
 
 interface Position {
   x: number;

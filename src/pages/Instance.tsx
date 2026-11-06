@@ -1,4 +1,4 @@
-import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { startTransition, useCallback, useEffect, useRef, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { ChevronLeft } from "lucide-react";
 import "uplot/dist/uPlot.min.css";
@@ -10,11 +10,13 @@ import {
   buildLoadTimeRangeOptions,
   buildPingTimeRangeOptions,
 } from "@/components/instance/chartShared";
-import { usePublicConfig } from "@/hooks/usePublicConfig";
 import { useNodeMeta, useNodeStoreStatus } from "@/hooks/useNode";
 import { useThemeSettings } from "@/hooks/useThemeSettings";
 
 const DEFAULT_PING_HOURS = 4;
+// NodeGet 的历史查询按所选窗口返回实际可用样本，保留期限由主控管理。
+const loadRanges = buildLoadTimeRangeOptions(undefined);
+const pingRanges = buildPingTimeRangeOptions(undefined);
 type TimeRangeOption = ReturnType<typeof buildLoadTimeRangeOptions>[number];
 
 function RangeSelector({
@@ -45,7 +47,6 @@ function RangeSelector({
 
 export function Instance() {
   const { uuid } = useParams<{ uuid: string }>();
-  const { data: config } = usePublicConfig();
   const themeSettings = useThemeSettings();
   const meta = useNodeMeta(uuid ?? "");
   const storeStatus = useNodeStoreStatus(Boolean(uuid));
@@ -54,19 +55,6 @@ export function Instance() {
   const [pingHours, setPingHours] = useState(DEFAULT_PING_HOURS);
   const chartControlsRef = useRef<HTMLDivElement | null>(null);
 
-  const metricRetentionHours =
-    config?.metric_retention_days && config.metric_retention_days > 0
-      ? config.metric_retention_days * 24
-      : null;
-
-  const loadRanges = useMemo(
-    () => buildLoadTimeRangeOptions(metricRetentionHours ?? config?.record_preserve_time),
-    [config?.record_preserve_time, metricRetentionHours],
-  );
-  const pingRanges = useMemo(
-    () => buildPingTimeRangeOptions(metricRetentionHours ?? config?.ping_record_preserve_time),
-    [config?.ping_record_preserve_time, metricRetentionHours],
-  );
   const showPingChart = themeSettings.isReady && themeSettings.showPingChart;
 
   const alignCharts = useCallback(() => {
@@ -84,7 +72,7 @@ export function Instance() {
     if (!loadRanges.some((range) => range.value === loadHours)) {
       setLoadHours(loadRanges[0]?.value ?? 0);
     }
-  }, [loadHours, loadRanges]);
+  }, [loadHours]);
 
   useEffect(() => {
     if (!pingRanges.some((range) => range.value === pingHours)) {
@@ -94,7 +82,7 @@ export function Instance() {
           DEFAULT_PING_HOURS,
       );
     }
-  }, [pingHours, pingRanges]);
+  }, [pingHours]);
 
   useEffect(() => {
     if (!showPingChart && chartType === "ping") {

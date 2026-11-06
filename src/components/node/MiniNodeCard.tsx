@@ -1,3 +1,4 @@
+import { NodeUnavailable } from "./NodeUnavailable";
 import { memo, useState, type CSSProperties, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import {
@@ -27,8 +28,9 @@ import {
   pingEmptyLabels,
 } from "./nodeCardShared";
 import { formatHealthBucketTooltip } from "./pingBucketText";
+import { PingDataNotice } from "./PingDataNotice";
 import { formatBytes, type ByteRateDisplay } from "@/utils/format";
-import type { NodeInfo, NodeMetrics, PingOverviewItem, PingOverviewBucket } from "@/types/komari";
+import type { NodeInfo, NodeMetrics, PingOverviewItem, PingOverviewBucket } from "@/types/models";
 
 // 迷你卡固定为巡检布局，不跟随紧凑卡的可选指标开关；数据仍走共享模型。
 const HEALTH_BAR_COUNT = 24;
@@ -340,6 +342,8 @@ const MiniHealth = memo(function MiniHealth({
     hasRealHomepagePingBinding,
     pingLoading,
     pingError,
+    ping.dataIssue,
+    ping.loss != null,
   );
   return (
     <div
@@ -356,6 +360,7 @@ const MiniHealth = memo(function MiniHealth({
           <span className="mini-node-health-label">
             <Clock3 size={12} strokeWidth={2} />
             延迟
+            <PingDataNotice issue={ping.dataIssue} />
           </span>
           <strong className="mini-node-health-value tabular" style={{ color: latencyColor }}>
             {ping.lastValue != null ? (
@@ -406,6 +411,10 @@ export const MiniNodeCard = memo(function MiniNodeCard({
 
   if (!model.node) {
     return <article className="mini-node-card animate-pulse" aria-busy />;
+  }
+
+  if (model.node.online === null) {
+    return <NodeUnavailable node={model.node} className="mini-node-card" />;
   }
 
   const {

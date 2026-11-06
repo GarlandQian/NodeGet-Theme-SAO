@@ -35,7 +35,7 @@ import { formatBytes, formatTrafficRateLabel } from "@/utils/format";
 import { historyChartRangeSeconds, historyCoverageLabel } from "@/utils/historyRange";
 import { resolveLoadRecordTotals } from "@/utils/loadMetrics";
 import { usePreferences } from "@/hooks/usePreferences";
-import type { LoadRecord, NodeMetrics } from "@/types/komari";
+import type { LoadRecord, NodeMetrics } from "@/types/models";
 
 const LOAD_HISTORY_SAMPLE_LIMIT = 360;
 const LOAD_HISTORY_RENDER_LIMIT = 720;
@@ -394,7 +394,8 @@ export function LoadChart({
     active,
   );
   const isRealtime = hours === 0;
-  const node = useNodeMetrics(uuid, isRealtime && active);
+  const latestNode = useNodeMetrics(uuid, isRealtime && active);
+  const node = latestNode?.online === true ? latestNode : undefined;
   const meta = useNodeMeta(uuid);
   const { resolvedAppearance } = usePreferences();
   const [realtimePoints, setRealtimePoints] = useState<ChartPoint[]>([]);
@@ -442,7 +443,7 @@ export function LoadChart({
         disk: totals.diskTotal > 0 ? (record.disk / totals.diskTotal) * 100 : null,
         netIn: record.net_in,
         netOut: record.net_out,
-        connections: record.connections,
+        connections: record.connections_tcp ?? record.connections - record.connections_udp,
         udp: record.connections_udp,
         process: record.process,
       };

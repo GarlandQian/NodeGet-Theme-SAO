@@ -114,7 +114,7 @@ describe("getExpireDaysRemaining / formatExpireDays", () => {
     expect(formatExpireDays(null)).toEqual({ value: "—", unit: "", tone: "none" });
   });
 
-  it("treats Komari 'no expiry' sentinels as no-expiry, not as 已过期", () => {
+  it("treats empty expiry values as no-expiry, not as 已过期", () => {
     // 防回归:Go 零值时间和数字 0 / -1 这些哨兵值以前会被解析成 1 年 / 2000 / 2001 年,
     // 把永不过期的节点显示成"已过期"
     for (const sentinel of ["0001-01-01T00:00:00Z", "0", "-1", ""]) {

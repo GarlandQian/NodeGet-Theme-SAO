@@ -1,3 +1,4 @@
+import { NodeUnavailable } from "./NodeUnavailable";
 import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import {
@@ -44,8 +45,9 @@ import { IpStackBadges } from "./IpStackBadges";
 import { HealthBucketTooltip } from "./HealthBucketTooltip";
 import { MultiPingStatus } from "./MultiPingStatus";
 import { formatHealthBucketTooltip } from "./pingBucketText";
+import { PingDataNotice } from "./PingDataNotice";
 import { clsx } from "clsx";
-import type { NodeInfo, NodeMetrics, PingOverviewBucket, PingOverviewItem, TrafficTrendSample } from "@/types/komari";
+import type { NodeInfo, NodeMetrics, PingOverviewBucket, PingOverviewItem, TrafficTrendSample } from "@/types/models";
 import type { ByteRateDisplay } from "@/utils/format";
 
 type NodeCardNode = NodeInfo & NodeMetrics;
@@ -78,6 +80,10 @@ export const NodeCard = memo(function NodeCard({
         aria-busy
       />
     );
+  }
+
+  if (model.node.online === null) {
+    return <NodeUnavailable node={model.node} className="server-card" />;
   }
 
   const {
@@ -458,6 +464,8 @@ const NodeHealthSection = memo(function NodeHealthSection({
     hasRealHomepagePingBinding,
     pingLoading,
     pingError,
+    ping.dataIssue,
+    ping.loss != null,
   );
   const hoveredLatencyBucket =
     hoveredLatencyIndex == null ? null : (pingBuckets[hoveredLatencyIndex] ?? null);
@@ -477,6 +485,7 @@ const NodeHealthSection = memo(function NodeHealthSection({
           <div className="server-health-label">
             <Clock3 size={13} strokeWidth={2} />
             <span>延迟</span>
+            <PingDataNotice issue={ping.dataIssue} />
           </div>
           <span
             className="server-health-value tabular"

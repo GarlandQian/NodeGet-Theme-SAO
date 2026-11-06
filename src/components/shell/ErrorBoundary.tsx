@@ -78,7 +78,7 @@ function ErrorFallback({
     <div className="theme-error-shell">
       <section className="theme-error-card" role="alert">
         <div>
-          <p className="theme-error-kicker">Komari Theme SAO</p>
+          <p className="theme-error-kicker">NodeGet Theme SAO</p>
           <h1 className="theme-error-title">{title}</h1>
           <p className="theme-error-message">
             {message || "可以刷新页面，或返回首页重新进入。"}
@@ -103,7 +103,7 @@ function ErrorFallback({
           <button type="button" className="theme-error-button is-primary" onClick={reloadPage}>
             刷新
           </button>
-          <a href="/" className="theme-error-button">
+          <a href={`${import.meta.env.BASE_URL}#/`} className="theme-error-button">
             返回首页
           </a>
         </div>
@@ -122,7 +122,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   componentDidCatch(error: Error, info: ErrorInfo) {
     // 类组件里用不了 hook,所以用 readViewModeHint。它给的是 device + override 而非最终解析的 mode,但区分 compact/large 排查问题足够了
     console.error(
-      "[Komari-Theme-SAO] render error\n" + buildDiagnostics(error, readViewModeHint()),
+      "[NodeGet-Theme-SAO] render error\n" + buildDiagnostics(error, readViewModeHint()),
       info,
     );
   }
@@ -148,7 +148,7 @@ export function RouteErrorFallback() {
   const diagnostics = buildDiagnostics(error, `${device}/${mode}`);
 
   useEffect(() => {
-    console.error("[Komari-Theme-SAO] route error\n" + diagnostics);
+    console.error("[NodeGet-Theme-SAO] route error\n" + diagnostics);
   }, [diagnostics]);
 
   if (isRouteErrorResponse(error)) {

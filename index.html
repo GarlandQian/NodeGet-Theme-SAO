@@ -5,75 +5,28 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta
       name="keywords"
-      content="Komari-Theme-SAO, SAO, server monitor, real-time server status, server performance dashboard, monitoring tool" />
+      content="NodeGet-Theme-SAO, SAO, server monitor, real-time server status, server performance dashboard, monitoring tool" />
     <meta name="theme-color" content="#f4f5f7" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-    <meta name="apple-mobile-web-app-title" content="Komari-Theme-SAO" />
-    <link rel="manifest" href="/manifest.json" crossorigin="use-credentials" />
-    <link rel="apple-touch-icon" href="/favicon.ico" />
-    <link rel="icon" type="image/png" sizes="192x192" href="/favicon.ico" />
-    <meta property="og:title" content="Komari-Theme-SAO" />
-    <meta property="og:description" content="A Komari monitor theme." />
+    <meta name="apple-mobile-web-app-title" content="NodeGet-Theme-SAO" />
+    <link rel="manifest" href="./manifest.json" />
+    <link rel="apple-touch-icon" href="./favicon.svg" />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <meta property="og:title" content="NodeGet-Theme-SAO" />
+    <meta property="og:description" content="SAO dashboard theme for NodeGet." />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="Komari-Theme-SAO" />
-    <meta name="twitter:description" content="A Komari monitor theme." />
-    <title>Komari-Theme-SAO</title>
-    <meta name="description" content="A Komari monitor theme." />
+    <meta name="twitter:title" content="NodeGet-Theme-SAO" />
+    <meta name="twitter:description" content="SAO dashboard theme for NodeGet." />
+    <title>NodeGet-Theme-SAO</title>
+    <meta name="description" content="SAO dashboard theme for NodeGet." />
+    <link rel="stylesheet" href="./custom.css" />
     <script>
       (() => {
-        // 超前核心 API 预加载：利用浏览器解析 HTML 与下载 React Bundle 的网络空档期，提前并发拉取关键数据
         try {
-          if (typeof window !== "undefined" && typeof fetch === "function") {
-            const p = window.location.pathname || "/";
-            const dir = p.endsWith("/") ? p : p.substring(0, p.lastIndexOf("/") + 1);
-            const prefix = dir === "/" ? "" : dir.replace(/\/+$/, "");
-            const base = prefix ? prefix : "";
-            const headers = { Accept: "application/json" };
-            const opts = { credentials: "include", headers };
-            const rpcHeaders = { Accept: "application/json", "Content-Type": "application/json" };
-            const rpcPost = (method, params = {}) =>
-              fetch(base + "/api/rpc2", {
-                method: "POST",
-                credentials: "include",
-                headers: rpcHeaders,
-                body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-              })
-                .then((r) => (r.ok ? r.json() : null))
-                .catch(() => null);
-
-            const now = Date.now();
-            const d = new Date(now);
-            d.setHours(0, 0, 0, 0);
-            const startIso = d.toISOString();
-            const endIso = new Date(now).toISOString();
-
-            window.__EARLY_DATA__ = {
-              public: fetch(base + "/api/public", opts).then((r) => (r.ok ? r.json() : null)).catch(() => null),
-              me: fetch(base + "/api/me", opts).then((r) => (r.ok ? r.json() : null)).catch(() => null),
-              nodes: fetch(base + "/api/nodes", opts).then((r) => (r.ok ? r.json() : null)).catch(() => null),
-              rpc_nodes: rpcPost("common:getNodes"),
-              today_traffic: {
-                startMs: d.getTime(),
-                promise: rpcPost("public:queryMetrics", {
-                  start: startIso,
-                  end: endIso,
-                  metric_keys: ["traffic.up", "traffic.down", "net.out.rate", "net.in.rate"],
-                  aggregation_by_metric: {
-                    "traffic.up": "sum",
-                    "traffic.down": "sum",
-                    "net.out.rate": "max",
-                    "net.in.rate": "max",
-                  },
-                }),
-              },
-            };
-          }
-        } catch {}
-
-        try {
-          const cachedTitle = localStorage.getItem("komaritheme:sitename");
+          const deploymentPath = new URL("./", window.location.href).pathname;
+          const cachedTitle = localStorage.getItem(`nodeget-sao:sitename:${deploymentPath}`);
           if (cachedTitle && cachedTitle.trim()) {
             document.title = cachedTitle.trim();
             const setMeta = (sel, val) => {
@@ -84,7 +37,7 @@
             setMeta('meta[property="og:title"]', cachedTitle.trim());
             setMeta('meta[name="twitter:title"]', cachedTitle.trim());
           }
-          const cachedDesc = localStorage.getItem("komaritheme:description");
+          const cachedDesc = localStorage.getItem(`nodeget-sao:description:${deploymentPath}`);
           if (cachedDesc && cachedDesc.trim()) {
             const setMeta = (sel, val) => {
               const el = document.querySelector(sel);
@@ -138,7 +91,7 @@
         }
 
         try {
-          const rawDepth = localStorage.getItem("komaritheme:dark-depth");
+          const rawDepth = localStorage.getItem("nodeget-sao:dark-depth");
           if (rawDepth != null) {
             const parsedDepth = Number(rawDepth);
             const darkDepth = Number.isFinite(parsedDepth)
@@ -160,5 +113,6 @@
   <body>
     <div id="root" class="relative z-30"></div>
     <script type="module" src="/src/main.tsx"></script>
+    <script src="./custom.js" defer></script>
   </body>
 </html>

@@ -3,7 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { clearCssColorCache } from "@/components/node/CanvasStrip";
 import { usePublicConfig } from "@/hooks/usePublicConfig";
 import { saveThemeSettings } from "@/services/api";
-import type { PublicConfig } from "@/types/komari";
+import type { PublicConfig } from "@/types/models";
 
 // 指标色和暗色深度保存到 theme_settings，并通过 CSS 变量全局应用。
 
@@ -51,7 +51,7 @@ type MetricColors = Partial<Record<MetricColorKey, string>>;
 
 const SETTINGS_KEY = "metricColors";
 const DARK_DEPTH_SETTINGS_KEY = "darkDepth";
-const DARK_DEPTH_CACHE_KEY = "komaritheme:dark-depth";
+const DARK_DEPTH_CACHE_KEY = "nodeget-sao:dark-depth";
 const HEX = /^#[0-9a-f]{6}$/;
 
 export const DEFAULT_METRIC_COLORS: Record<"light" | "dark", Record<MetricColorKey, string>> = {
@@ -96,7 +96,7 @@ function toInputHex(value: string): string {
   return HEX.test(v) ? v : "#888888";
 }
 
-/** 从后端 theme_settings 解析出已保存的指标配色（校验 hex 与已知 key）。 */
+/** 从已合并站点与本地偏好的 theme_settings 解析指标配色。 */
 function readMetricColorsFromSettings(
   settings: Record<string, unknown> | undefined,
 ): MetricColors {
@@ -180,7 +180,7 @@ function applyDarkDepth(value: number) {
     if (depth === DEFAULT_DARK_DEPTH) localStorage.removeItem(DARK_DEPTH_CACHE_KEY);
     else localStorage.setItem(DARK_DEPTH_CACHE_KEY, String(depth));
   } catch {
-    // 首帧缓存失败不影响当前预览与后端设置。
+    // 首帧缓存失败不影响当前预览。
   }
 }
 
@@ -209,7 +209,7 @@ export function readEffectiveColors(): Record<MetricColorKey, string> {
   return out;
 }
 
-/** 全局：把后端保存的配色应用到所有访客（在 AppShell 挂载一次）。 */
+/** 全局应用当前浏览器的有效配色（在 AppShell 挂载一次）。 */
 export function useMetricColorsSync() {
   const { data: config } = usePublicConfig();
   const palette = useMemo(
@@ -224,7 +224,7 @@ export function useMetricColorsSync() {
   }, [palette]);
 }
 
-/** 管理员编辑：改色/暗色深度即时预览 + 防抖保存到后端 theme_settings。 */
+/** 即时预览配色与暗色深度，防抖保存到当前浏览器。 */
 export function useMetricColorsEditor() {
   const { data: config } = usePublicConfig();
   const queryClient = useQueryClient();
@@ -281,13 +281,9 @@ export function useMetricColorsEditor() {
           // 合并最新 public 缓存，保留同期保存的其他主题设置。
           const latest = queryClient.getQueryData<PublicConfig>(["public"]) ?? config;
           const nextSettings: Record<string, unknown> = { ...(latest.theme_settings ?? {}) };
-          if (Object.keys(current.colors).length > 0) nextSettings[SETTINGS_KEY] = current.colors;
-          else delete nextSettings[SETTINGS_KEY];
-          if (current.darkDepth !== DEFAULT_DARK_DEPTH) {
-            nextSettings[DARK_DEPTH_SETTINGS_KEY] = current.darkDepth;
-          } else {
-            delete nextSettings[DARK_DEPTH_SETTINGS_KEY];
-          }
+          // 显式空对象/零值覆盖站点配色，避免重置后又回到站点旧值。
+          nextSettings[SETTINGS_KEY] = current.colors;
+          nextSettings[DARK_DEPTH_SETTINGS_KEY] = current.darkDepth;
           try {
             await saveThemeSettings(latest.theme, nextSettings);
             lastOk = true;

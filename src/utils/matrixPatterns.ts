@@ -146,10 +146,10 @@ export const PATTERN_PRESETS: Record<string, PatternPreset> = {
 export const DEFAULT_PATTERN = PATTERN_PRESETS.sao.indices;
 export const DEFAULT_PATTERN_SET = new Set<number>(DEFAULT_PATTERN);
 
-import type { UserMatrixPreset } from "@/types/komari";
+import type { UserMatrixPreset } from "@/types/models";
 export type { UserMatrixPreset };
 
-export const USER_PRESETS_STORAGE_KEY = "komari-sao:matrix-user-presets";
+export const USER_PRESETS_STORAGE_KEY = "nodeget-sao:matrix-user-presets";
 const LEGACY_USER_PRESETS_STORAGE_KEY = "cfsm-sao:matrix-user-presets";
 export const MAX_USER_PRESETS = 12;
 

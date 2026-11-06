@@ -1,19 +1,17 @@
 import { useCallback, useSyncExternalStore } from "react";
-import { useAuth } from "@/hooks/useAuth";
 import { useThemeSettings } from "@/hooks/useThemeSettings";
 
-const PRICE_VISIBILITY_OVERRIDE_KEY = "komaritheme:price-visibility-override";
+const PRICE_VISIBILITY_OVERRIDE_KEY = "nodeget-sao:price-visibility-override";
 
 export type PriceVisibilityOverride = "visible" | "hidden" | null;
 
 const listeners = new Set<() => void>();
 
 export function resolvePriceVisibility(
-  loggedIn: boolean,
   showPriceForGuests: boolean,
   override: PriceVisibilityOverride,
 ): boolean {
-  return loggedIn ? override !== "hidden" : showPriceForGuests;
+  return showPriceForGuests && override !== "hidden";
 }
 
 function readStoredOverride(): PriceVisibilityOverride {
@@ -59,30 +57,25 @@ function getSnapshot(): PriceVisibilityOverride {
 }
 
 export function usePriceVisibility() {
-  const { data: me } = useAuth();
   const themeSettings = useThemeSettings();
   const override = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 
-  const loggedIn = Boolean(me?.logged_in);
-
-  // 未登录访客：严格跟随后台主题配置项 showPriceForGuests（默认 false 为隐藏）
-  // 已登录管理员：默认显示（true），但允许通过快捷开关临时切换显示/隐藏
-  const isPriceVisible = loggedIn
-    ? override !== "hidden"
-    : themeSettings.showPriceForGuests;
+  const enabled = themeSettings.showPriceForGuests;
+  // 防窥只能隐藏已公开的费用，不能打开站点未授权公开的资产数据。
+  const isPriceVisible = resolvePriceVisibility(enabled, override);
 
   const togglePriceVisibility = useCallback(() => {
-    if (!loggedIn) return;
+    if (!enabled) return;
     const next = override === "hidden" ? "visible" : "hidden";
     writeStoredOverride(next);
-  }, [loggedIn, override]);
+  }, [enabled, override]);
 
   const setPriceVisible = useCallback(
     (visible: boolean) => {
-      if (!loggedIn) return;
+      if (!enabled) return;
       writeStoredOverride(visible ? "visible" : "hidden");
     },
-    [loggedIn],
+    [enabled],
   );
 
   const resetPriceVisibilityOverride = useCallback(() => {
@@ -91,7 +84,7 @@ export function usePriceVisibility() {
 
   return {
     isPriceVisible,
-    canToggle: loggedIn,
+    canToggle: enabled,
     togglePriceVisibility,
     setPriceVisible,
     resetPriceVisibilityOverride,

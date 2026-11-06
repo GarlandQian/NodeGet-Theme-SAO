@@ -1,5 +1,4 @@
 import { useCallback, useLayoutEffect, useMemo, useSyncExternalStore } from "react";
-import { useAuth } from "@/hooks/useAuth";
 import { useMinuteClock } from "@/hooks/useClock";
 import { useVisibleNodeUuids } from "@/hooks/useNode";
 import { useHiddenNodeUuids } from "@/hooks/useVisibleNodes";
@@ -9,19 +8,20 @@ import {
   getPingOverview,
   getPingOverviewStats,
   getPublicPingTasks,
-  prewarmPingOverviewDependencies,
 } from "@/services/api";
 import type {
   HomepagePingLine,
   PingOverviewBucket,
   PingOverviewItem,
   PingOverviewTaskLoadState,
+  PingDataIssue,
   PingRecord,
   PingTask,
   PingTaskStats,
-} from "@/types/komari";
+} from "@/types/models";
 import { withTimeoutSignal } from "@/utils/abort";
 import { resolvePingSampleCounts } from "@/utils/pingMetrics";
+import { pingRequestIssue } from "@/utils/pingStatus";
 import {
   isFallbackTaskName,
   isHomepageMultiPingConfigured,
@@ -33,8 +33,8 @@ import type { NodeViewMode } from "@/utils/themeSettings";
 const DEFAULT_PING_REFRESH_INTERVAL = 60_000;
 const MIN_PING_REFRESH_INTERVAL = 10_000;
 const MAX_PING_REFRESH_INTERVAL = 300_000;
-// 首页延迟图表最多显示 24 个 bucket。metric API 返回的是聚合区间而不是瞬时点，
-// 绘制时要把较粗的后端区间投影到它覆盖的可视 bucket，同时保持卡片密度一致。
+// 首页延迟图表最多显示 24 个 bucket。原生任务记录在适配层按时间聚合，
+// 绘制时把聚合区间投影到它覆盖的可视 bucket，同时保持卡片密度一致。
 const MAX_VISIBLE_HOMEPAGE_PING_BUCKETS = 24;
 
 const EMPTY_PING: PingOverviewItem = {
@@ -148,6 +148,8 @@ function equalPingItem(a: PingOverviewItem | undefined, b: PingOverviewItem | un
     a.client === b.client &&
     a.isAssigned === b.isAssigned &&
     a.loadState === b.loadState &&
+    a.dataIssue?.status === b.dataIssue?.status &&
+    a.dataIssue?.message === b.dataIssue?.message &&
     a.lastValue === b.lastValue &&
     a.metricIntervalMs === b.metricIntervalMs &&
     a.max === b.max &&
@@ -232,9 +234,9 @@ export function buildPingOverviewItems(
     result.set(client, {
       client,
       isAssigned: true,
-      lastValue:
-        serverStats?.latest ??
-        (latestRecord && latestRecord.value >= 0 ? latestRecord.value : null),
+      lastValue: serverStats
+        ? serverStats.latest
+        : (latestRecord && latestRecord.value >= 0 ? latestRecord.value : null),
       metricIntervalMs,
       samples,
       max: serverStats?.max ?? max,
@@ -265,20 +267,18 @@ function resolvePingAssignmentKey(
     multiTaskIdsByClient,
     requestedTaskIdsByClient,
   } = resolveHomepagePingSelections(normalizedUuids, bindings, multiTaskIds);
-  const selectedTaskIds = new Set(
-    Array.from(requestedTaskIdsByClient.values()).flat(),
-  );
-  if (selectedTaskIds.size === 0) return "";
+  if (!normalizedUuids.length) return "";
+  const automaticUuids = normalizedUuids.filter(uuid => !requestedTaskIdsByClient.has(uuid));
   return [
     `single:${buildAssignmentKey(singleTaskIdsByClient)}`,
     `multi:${buildAssignmentKey(multiTaskIdsByClient)}`,
+    ...(automaticUuids.length ? [`auto:${automaticUuids.join(",")}`] : []),
   ].join("|");
 }
 
-// 限制 RPC 与兼容接口组成的整条回退链，避免一次刷新长期占住轮询。
+// 限制原生任务查询的等待时间，避免一次刷新长期占住轮询。
 const PING_REQUEST_TIMEOUT_MS = 35_000;
-const PING_CACHE_STORAGE_KEY = "komari:sao:homepage-ping:v1";
-const LEGACY_PING_CACHE_STORAGE_KEY = "komari:lumina-plus:homepage-ping:v1";
+const PING_CACHE_STORAGE_KEY = "nodeget:sao:homepage-ping:v1";
 const PING_CACHE_TTL_MS = 5 * 60_000;
 
 interface PingOverviewCachePayload {
@@ -388,22 +388,8 @@ export async function buildPingOverviewMap(
   const selectedTaskIds = Array.from(
     new Set(Array.from(requestedTaskIdsByClient.values()).flat()),
   ).sort((left, right) => left - right);
-  const assignmentKey = [
-    `single:${buildAssignmentKey(singleTaskIdsByClient)}`,
-    `multi:${buildAssignmentKey(multiTaskIdsByClient)}`,
-  ].join("|");
-
-  if (selectedTaskIds.length === 0) {
-    return {
-      assignmentKey: "",
-      intervalMs: DEFAULT_PING_REFRESH_INTERVAL,
-      singleItems: new Map<string, PingOverviewItem>(),
-      multiLines: new Map<string, HomepagePingLine[]>(),
-      successfulTaskIds: [],
-      failedTaskIds: [],
-      pendingTaskIds: [],
-    };
-  }
+  const automaticUuids = normalizedUuids.filter(uuid => !requestedTaskIdsByClient.has(uuid));
+  const assignmentKey = resolvePingAssignmentKey(normalizedUuids, bindings, multiTaskIds);
 
   type LoadedPingOverviewTask = {
     taskId: number;
@@ -426,6 +412,7 @@ export async function buildPingOverviewMap(
   const taskStates = new Map<number, PingOverviewTaskLoadState>(
     selectedTaskIds.map((taskId) => [taskId, "pending"]),
   );
+  const taskIssues = new Map<number, PingDataIssue>();
   const refreshIntervals = new Map<number, number>();
   const loadedByTask = new Map<number, LoadedPingOverviewTask>();
   let batchedStats: PingTaskStats[] = [];
@@ -461,6 +448,12 @@ export async function buildPingOverviewMap(
     changedUuids.add(uuid);
   }
 
+  for (const uuid of automaticUuids) {
+    const previousItem = hasPrevious ? previous?.singleItems.get(uuid) : undefined;
+    singleItems.set(uuid, previousItem ?? assignedEmptyPing(uuid));
+    changedUuids.add(uuid);
+  }
+
   for (const [uuid, taskIds] of multiTaskIdsByClient) {
     const previousLines = hasPrevious ? previous?.multiLines.get(uuid) : undefined;
     const lines = taskIds.map((taskId) => {
@@ -492,12 +485,14 @@ export async function buildPingOverviewMap(
     if (!current) return;
     const taskState = taskStates.get(taskId) ?? "pending";
     const displayState = taskState === "pending" ? (current.loadState ?? "ready") : taskState;
+    const nodeIssue = loadedByTask.get(taskId)?.overview.issues?.[uuid] ?? taskIssues.get(taskId);
     const next = successfulTaskIds.has(taskId)
       ? {
           ...(itemsByTask.get(taskId)?.get(uuid) ?? assignedEmptyPing(uuid, "ready")),
-          loadState: "ready" as const,
+          loadState: nodeIssue && nodeIssue.status !== "partial" ? "error" as const : "ready" as const,
+          dataIssue: nodeIssue,
         }
-      : { ...current, loadState: displayState };
+      : { ...current, loadState: displayState, dataIssue: taskIssues.get(taskId) ?? current.dataIssue };
     if (!equalPingItem(current, next)) {
       singleItems.set(uuid, next);
       changedUuids.add(uuid);
@@ -516,14 +511,16 @@ export async function buildPingOverviewMap(
     const displayState = taskState === "pending" ? (current.loadState ?? "ready") : taskState;
     const currentName = !isFallbackTaskName(current.taskName) ? current.taskName : undefined;
     const resolvedName = taskNames.get(taskId) ?? currentName ?? `任务 #${taskId}`;
+    const nodeIssue = loadedByTask.get(taskId)?.overview.issues?.[uuid] ?? taskIssues.get(taskId);
     const next = successfulTaskIds.has(taskId)
       ? {
           taskId,
           taskName: resolvedName,
           ...(itemsByTask.get(taskId)?.get(uuid) ?? assignedEmptyPing(uuid, "ready")),
-          loadState: "ready" as const,
+          loadState: nodeIssue && nodeIssue.status !== "partial" ? "error" as const : "ready" as const,
+          dataIssue: nodeIssue,
         }
-      : { ...current, taskName: resolvedName, loadState: displayState };
+      : { ...current, taskName: resolvedName, loadState: displayState, dataIssue: taskIssues.get(taskId) ?? current.dataIssue };
     if (equalPingLine(current, next)) return;
     const nextLines = [...lines];
     nextLines[index] = next;
@@ -566,6 +563,14 @@ export async function buildPingOverviewMap(
     successfulTaskIds.add(loaded.taskId);
     failedTaskIds.delete(loaded.taskId);
     taskStates.set(loaded.taskId, "ready");
+    if (loaded.overview.quality === "partial" && !loaded.overview.issues) {
+      taskIssues.set(loaded.taskId, {
+        status: "partial",
+        message: loaded.overview.message || "部分 Ping 数据无法读取，统计不完整",
+      });
+    } else {
+      taskIssues.delete(loaded.taskId);
+    }
     const {
       taskId,
       entityIds,
@@ -599,8 +604,9 @@ export async function buildPingOverviewMap(
     for (const loaded of loadedByTask.values()) applyOverview(loaded);
   };
 
-  const batchStatsLoader =
-    loadStats ?? (loadOverview === getPingOverview ? getPingOverviewStats : null);
+  const batchStatsLoader = selectedTaskIds.length > 0
+    ? loadStats ?? (loadOverview === getPingOverview ? getPingOverviewStats : null)
+    : null;
   const batchStatsRequest = batchStatsLoader
     ? withTimeoutSignal(
         (requestSignal) =>
@@ -620,8 +626,9 @@ export async function buildPingOverviewMap(
         .catch(() => [] as PingTaskStats[])
     : Promise.resolve([] as PingTaskStats[]);
 
-  const batchTasksLoader =
-    loadTasks ?? (loadOverview === getPingOverview ? getPublicPingTasks : null);
+  const batchTasksLoader = selectedTaskIds.length > 0
+    ? loadTasks ?? (loadOverview === getPingOverview ? getPublicPingTasks : null)
+    : null;
   const batchTasksRequest = batchTasksLoader
     ? withTimeoutSignal(
         (requestSignal) =>
@@ -684,6 +691,7 @@ export async function buildPingOverviewMap(
         failedTaskIds.add(taskId);
         successfulTaskIds.delete(taskId);
         taskStates.set(taskId, "error");
+        taskIssues.set(taskId, pingRequestIssue(reason));
         updateTaskOutputs(taskId);
         emitProgress();
         return { status: "rejected" as const, reason };
@@ -691,7 +699,64 @@ export async function buildPingOverviewMap(
     }),
   );
 
-  await Promise.all([batchTasksRequest, batchStatsRequest, overviewRequest]);
+  const automaticRequest = automaticUuids.length > 0
+    ? withTimeoutSignal(
+        requestSignal => loadOverview(hours, undefined, {
+          signal: requestSignal,
+          entityIds: automaticUuids,
+          includeStats: true,
+        }),
+        PING_REQUEST_TIMEOUT_MS,
+        signal,
+      ).then(overview => {
+        for (const uuid of automaticUuids) {
+          const sampledTaskIds = new Set(overview.records.filter(record => record.client === uuid).map(record => record.task_id));
+          // 优先使用当前窗口里有样本的任务，再以 ICMP、名称、身份固定排序。
+          // 任务来自 NodeGet 返回的执行记录，主题不需要另外保存一份绑定才能显示。
+          const candidates = overview.tasks
+            .filter(task => task.clients.includes(uuid) || sampledTaskIds.has(task.id))
+            .sort((left, right) =>
+              Number(sampledTaskIds.has(right.id)) - Number(sampledTaskIds.has(left.id)) ||
+              Number(right.type === "icmp") - Number(left.type === "icmp") ||
+              left.name.localeCompare(right.name) || left.id - right.id,
+            );
+          const task = candidates[0];
+          const dataIssue = overview.issues?.[uuid] ?? (overview.quality === "partial" && !overview.issues
+            ? { status: "partial" as const, message: overview.message || "部分 Ping 数据无法读取，统计不完整" }
+            : undefined);
+          const failed = dataIssue && dataIssue.status !== "partial";
+          const item = task ? buildPingOverviewItems(task.id, overview.records, overview.stats, overview.intervalSeconds).get(uuid) : undefined;
+          const previousItem = hasPrevious ? previous?.singleItems.get(uuid) : undefined;
+          singleItems.set(uuid, {
+            ...(item ?? (failed && previousItem ? previousItem : assignedEmptyPing(uuid, "ready"))),
+            isAssigned: Boolean(task || dataIssue),
+            loadState: failed ? "error" : "ready",
+            dataIssue,
+          });
+          if (task) {
+            if (failed) failedTaskIds.add(task.id);
+            else successfulTaskIds.add(task.id);
+            refreshIntervals.set(task.id, normalizeRefreshInterval(task.interval));
+          }
+          changedUuids.add(uuid);
+        }
+        emitProgress();
+      }).catch(error => {
+        if (signal?.aborted) return;
+        for (const uuid of automaticUuids) {
+          singleItems.set(uuid, {
+            ...(singleItems.get(uuid) ?? assignedEmptyPing(uuid)),
+            isAssigned: true,
+            loadState: "error",
+            dataIssue: pingRequestIssue(error),
+          });
+          changedUuids.add(uuid);
+        }
+        emitProgress();
+      })
+    : Promise.resolve();
+
+  await Promise.all([batchTasksRequest, batchStatsRequest, overviewRequest, automaticRequest]);
   return buildResult();
 }
 
@@ -781,10 +846,18 @@ function parseCachedPingItem(value: unknown): PingOverviewItem | null {
         : undefined;
   if (lastValue === undefined || loss === undefined) return null;
 
+  const issue = value.dataIssue;
+  const dataIssue = isRecord(issue) &&
+    ["partial", "forbidden", "unavailable", "error"].includes(String(issue.status)) &&
+    typeof issue.message === "string"
+    ? { status: issue.status as PingDataIssue["status"], message: issue.message }
+    : undefined;
+
   return {
     client: value.client,
     isAssigned: true,
     loadState: "ready",
+    ...(dataIssue ? { dataIssue } : {}),
     lastValue,
     ...(typeof value.metricIntervalMs === "number" &&
     Number.isFinite(value.metricIntervalMs) &&
@@ -805,9 +878,7 @@ function readPingOverviewCache(
 ): Omit<PingOverviewCachePayload, "version" | "savedAt" | "assignmentKey"> | null {
   if (!assignmentKey || typeof window === "undefined") return null;
   try {
-    const raw =
-      window.sessionStorage.getItem(PING_CACHE_STORAGE_KEY) ||
-      window.sessionStorage.getItem(LEGACY_PING_CACHE_STORAGE_KEY);
+    const raw = window.sessionStorage.getItem(PING_CACHE_STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as unknown;
     if (!isRecord(parsed)) return null;
@@ -1121,7 +1192,7 @@ async function refreshPingOverview() {
       const hasRequestedTasks = next.assignmentKey.length > 0;
       const nextStatus: PingOverviewLoadState = !hasRequestedTasks
         ? "ready"
-        : next.successfulTaskIds.length > 0
+        : next.successfulTaskIds.length > 0 || [...next.singleItems.values()].some(item => item.loadState === "ready")
           ? "ready"
           : "error";
       commitPingOverview(
@@ -1247,8 +1318,7 @@ function getPingLinesSnapshot(uuid: string) {
 }
 
 export function useHomepagePingOverview(viewMode: NodeViewMode) {
-  const { data: me } = useAuth();
-  const visibleUuids = useVisibleNodeUuids(me?.logged_in === true);
+  const visibleUuids = useVisibleNodeUuids();
   const themeSettings = useThemeSettings();
 
   // 主题级隐藏节点首页已不渲染,这里也从 overview 拉取里剔除——否则仍会为其绑定的
@@ -1274,19 +1344,8 @@ export function useHomepagePingOverview(viewMode: NodeViewMode) {
     requestMode === "multi"
       ? themeSettings.homepageMultiPingTaskIds
       : EMPTY_TASK_IDS;
-  const hasRequestedVisiblePing =
-    resolvePingAssignmentKey(
-      effectiveUuids,
-      requestedBindings,
-      requestedMultiTaskIds,
-    ).length > 0;
-
   useLayoutEffect(() => {
     if (!themeSettings.isReady) return;
-    // 空首页或全部节点被隐藏时不应触发 capability probe / 公开任务列表请求。
-    if (hasRequestedVisiblePing) {
-      prewarmPingOverviewDependencies();
-    }
     activeConsumers += 1;
     ensurePingOverviewStarted(
       effectiveUuids,
@@ -1305,7 +1364,6 @@ export function useHomepagePingOverview(viewMode: NodeViewMode) {
     requestMode,
     requestedBindings,
     requestedMultiTaskIds,
-    hasRequestedVisiblePing,
     themeSettings.isReady,
   ]);
 }
@@ -1376,8 +1434,8 @@ export function buildPingBuckets(
 
     totals[bucketIndex] += sampleCount;
     losts[bucketIndex] += sampleLost;
-    // 聚合点的 value 已由 metric 适配层恢复为“成功样本均值”，这里按 valid count
-    // 加权；旧接口/模拟数据没有 count，仍等价于单样本累加。
+    // 聚合点的 value 是原生任务成功样本均值，这里按 valid count
+    // 加权；没有聚合的记录按一个真实样本累计。
     if (sample.value >= 0 && sampleValid > 0) {
       positiveSums[bucketIndex] += sample.value * sampleValid;
       positiveCounts[bucketIndex] += sampleValid;

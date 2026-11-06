@@ -1,15 +1,15 @@
 import { useState } from "react";
 import { Outlet, useLocation } from "react-router-dom";
-import { Lock, WifiOff, RotateCw, ArrowRight } from "lucide-react";
+import { WifiOff, RotateCw } from "lucide-react";
 import { Spinner } from "@/components/ui/Spinner";
 import { useAppearance } from "@/hooks/useAppearance";
-import { useAuth } from "@/hooks/useAuth";
 import { usePublicConfig } from "@/hooks/usePublicConfig";
 import { useSiteMetadata } from "@/hooks/useSiteMetadata";
 import { readStoredSiteMetadata } from "@/hooks/useSiteMetadata";
 import { useMetricColorsSync } from "@/hooks/useMetricColors";
 import { useNodeStoreStatus } from "@/hooks/useNode";
 import { HomeSkeleton } from "./HomeSkeleton";
+import { SourceControls } from "./SourceControls";
 
 export function AppShell() {
   useAppearance();
@@ -17,12 +17,11 @@ export function AppShell() {
   useMetricColorsSync();
   const { pathname, search } = useLocation();
   const publicConfig = usePublicConfig();
-  const auth = useAuth();
   const cachedMeta = readStoredSiteMetadata();
   const siteName =
     publicConfig.data?.sitename?.trim() ||
     cachedMeta.siteName ||
-    (publicConfig.isPending ? "" : "Komari");
+    (publicConfig.isPending ? "" : "NodeGet SAO");
   const normalizedPath = (pathname.replace(/\/+$/, "") || "/").toLowerCase();
   const isDataRoute =
     normalizedPath === "/" ||
@@ -31,8 +30,7 @@ export function AppShell() {
     normalizedPath.startsWith("/instance/");
   const isCheckingAccess =
     isDataRoute &&
-    (publicConfig.isPending ||
-      (publicConfig.data?.private_site === true && auth.isPending));
+    publicConfig.isPending;
   const isMockError =
     new URLSearchParams(search).get("mock_error") === "1" ||
     new URLSearchParams(search).get("mock-error") === "1" ||
@@ -41,22 +39,12 @@ export function AppShell() {
         new URLSearchParams(window.location.search).get("mock-error") === "1"));
   const accessError =
     isMockError || (isDataRoute && publicConfig.isError && !publicConfig.data);
-  const isPrivateVisitor =
-    isDataRoute &&
-    publicConfig.data?.private_site === true &&
-    !auth.isPending &&
-    auth.data?.logged_in !== true;
   const isThemeManage =
     new URLSearchParams(search).get("view") === "theme-manage" ||
     (typeof window !== "undefined" &&
       new URLSearchParams(window.location.search).get("view") === "theme-manage");
   const isHomeDashboard = normalizedPath === "/" && !isThemeManage;
-  // 并发直出：首页默认并发拉取节点，消除瀑布流排队；若后续判定私有则由 isPrivateVisitor 安全拦截
-  const canHydrateHome =
-    isHomeDashboard &&
-    !accessError &&
-    !isPrivateVisitor &&
-    !(publicConfig.data?.private_site === true && !auth.data?.logged_in);
+  const canHydrateHome = isHomeDashboard && !accessError;
   const homeStoreStatus = useNodeStoreStatus(canHydrateHome);
   const isCheckingHomeData =
     canHydrateHome && !homeStoreStatus.hydrated && !homeStoreStatus.nodeInfoError;
@@ -92,8 +80,9 @@ export function AppShell() {
       </header>
       <main className="app-main flex-1 px-3 pb-2 pt-6 sm:px-5 md:px-6 lg:px-8">
         <div className="mx-auto w-full max-w-430">
+          {!isThemeManage && !publicConfig.isPending && !accessError && <SourceControls />}
           {isCheckingShell ? (
-            isHomeDashboard && !isPrivateVisitor ? (
+            isHomeDashboard ? (
               <HomeSkeleton />
             ) : (
               <div className="flex min-h-[60vh] items-center justify-center">
@@ -102,8 +91,6 @@ export function AppShell() {
             )
           ) : accessError ? (
             <AccessError onRetry={() => void publicConfig.refetch()} />
-          ) : isPrivateVisitor ? (
-            <PrivateSiteGate />
           ) : (
             <Outlet />
           )}
@@ -160,35 +147,6 @@ function AccessError({ onRetry }: { onRetry: () => void }) {
             />
             <span>{refreshing ? "正在刷新…" : "刷新页面"}</span>
           </button>
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function PrivateSiteGate() {
-  return (
-    <div className="flex min-h-[60vh] items-center justify-center py-10">
-      <section className="access-error-card" role="alert">
-        <div className="access-error-icon-wrap is-lock" aria-hidden="true">
-          <Lock size={22} strokeWidth={2} />
-        </div>
-        <div className="space-y-1.5">
-          <h2 className="access-error-title">站点已设为私有</h2>
-          <p className="access-error-desc">
-            该探针已被站长设为私有访问，登录后即可查看节点实时状态。
-          </p>
-        </div>
-        <div className="access-error-actions">
-          <a
-            href="/admin"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="access-error-refresh-btn"
-          >
-            <span>前往登录</span>
-            <ArrowRight size={14} aria-hidden="true" />
-          </a>
         </div>
       </section>
     </div>

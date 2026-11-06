@@ -15,7 +15,7 @@ export function isAccessDeniedError(error: unknown) {
 
 export function historyRequestErrorMessage(error: unknown, fallback: string) {
   if (error instanceof HttpRequestError && error.status === 401) {
-    return "登录状态已失效，请重新登录后重试";
+    return "读取凭据无效或已过期，请检查站点配置";
   }
   if (error instanceof HttpRequestError && error.status === 403) {
     return "没有权限读取历史数据";

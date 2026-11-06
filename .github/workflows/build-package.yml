@@ -1,4 +1,4 @@
-name: Build theme package
+name: Release NodeGet theme
 
 on:
   workflow_dispatch:
@@ -6,24 +6,34 @@ on:
     tags:
       - "v*"
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+permissions:
+  contents: read
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+    timeout-minutes: 15
+    outputs:
+      tag: ${{ steps.metadata.outputs.tag }}
+      sha: ${{ steps.metadata.outputs.sha }}
+      zip: ${{ steps.metadata.outputs.zip }}
+      prerelease: ${{ steps.metadata.outputs.prerelease }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Checkout selected commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 22
+          node-version: "24"
           cache: npm
+
+      - name: Validate release version
+        id: metadata
+        run: node scripts/release-metadata.mjs >> "$GITHUB_OUTPUT"
 
       - name: Install dependencies
         run: npm ci
@@ -34,35 +44,76 @@ jobs:
       - name: Test
         run: npm test
 
-      - name: Build package
+      - name: Build distribution package
         run: npm run package
 
-      - name: Upload package artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: theme-package
-          path: |
-            *.zip
-            preview.png
-
-      - name: Resolve release notes
-        if: startsWith(github.ref, 'refs/tags/')
-        id: release-notes
+      - name: Verify package and prepare release assets
+        env:
+          RELEASE_VERSION: ${{ steps.metadata.outputs.version }}
+          RELEASE_TAG: ${{ steps.metadata.outputs.tag }}
+          RELEASE_ZIP: ${{ steps.metadata.outputs.zip }}
         shell: bash
         run: |
-          notes=".github/release-notes/${GITHUB_REF_NAME}.md"
+          python3 scripts/verify-release-package.py "$RELEASE_ZIP" "$RELEASE_VERSION"
+          mkdir -p release-assets
+          cp "$RELEASE_ZIP" preview.png release-assets/
+          cd release-assets
+          sha256sum "$RELEASE_ZIP" preview.png > SHA256SUMS
+          cd ..
+          notes=".github/release-notes/${RELEASE_TAG}.md"
           if [[ -f "$notes" ]]; then
-            echo "path=$notes" >> "$GITHUB_OUTPUT"
+            cp "$notes" release-assets/notes.md
           else
-            echo "Release ${GITHUB_REF_NAME}" > default-notes.md
-            echo "path=default-notes.md" >> "$GITHUB_OUTPUT"
+            printf 'NodeGet SAO 主题 %s\n\n下载 NodeGet-Theme-SAO-%s.zip，在 NodeGet 后台从本地压缩包安装。\n\n支持 NodeGet v0.6.0 与 v0.6.1 beta；主控和公开 Token 在安装后配置。\n' "$RELEASE_TAG" "$RELEASE_TAG" > release-assets/notes.md
           fi
 
-      - name: Publish GitHub release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+      - name: Upload verified release assets
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          files: |
-            *.zip
-            preview.png
-          body_path: ${{ steps.release-notes.outputs.path }}
+          name: nodeget-theme-${{ steps.metadata.outputs.tag }}
+          path: release-assets/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    concurrency:
+      group: nodeget-release-${{ needs.build.outputs.tag }}
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout release tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.build.outputs.sha }}
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "24"
+          package-manager-cache: false
+
+      - name: Download verified release assets
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: nodeget-theme-${{ needs.build.outputs.tag }}
+          path: release-assets/
+
+      - name: Verify transferred assets
+        working-directory: release-assets
+        run: sha256sum --check SHA256SUMS
+
+      - name: Publish a new GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.build.outputs.tag }}
+          RELEASE_SHA: ${{ needs.build.outputs.sha }}
+          RELEASE_ZIP: ${{ needs.build.outputs.zip }}
+          RELEASE_PRERELEASE: ${{ needs.build.outputs.prerelease }}
+        run: node scripts/publish-github-release.mjs

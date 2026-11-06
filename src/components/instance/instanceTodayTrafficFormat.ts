@@ -1,3 +1,4 @@
+import { hasTrafficData, hasRateData } from "@/utils/trafficStats";
 import { formatByteRateLabel, formatBytes, formatClockTime } from "@/utils/format";
 import type { TodayTrafficStat } from "@/utils/trafficStats";
 
@@ -9,11 +10,11 @@ export function formatTodayTrafficValue(
   if (isError && !stat) return "今日流量加载失败";
   if (pending && !stat) return "—";
   if (isError) {
-    if (!stat || !stat.hasSamples) return "今日暂无采样（更新失败）";
+    if (!stat || !hasTrafficData(stat)) return "今日暂无采样（更新失败）";
     return `↑ ${formatBytes(stat.trafficUp)} · ↓ ${formatBytes(stat.trafficDown)}（更新失败）`;
   }
-  if (!stat || !stat.hasSamples) return "今日暂无采样";
-  return `↑ ${formatBytes(stat.trafficUp)} · ↓ ${formatBytes(stat.trafficDown)}`;
+  if (!stat || !hasTrafficData(stat)) return stat?.statusMessage || "今日暂无流量快照";
+  return `↑ ${formatBytes(stat.trafficUp)} · ↓ ${formatBytes(stat.trafficDown)}${stat.partial ? "（部分时段）" : ""}`;
 }
 
 export function formatTodayPeakValue(
@@ -21,7 +22,7 @@ export function formatTodayPeakValue(
   pending: boolean,
 ): string {
   if (pending && !stat) return "—";
-  if (!stat || !stat.hasSamples) return "—";
+  if (!stat || !hasRateData(stat)) return "—";
   const upTime =
     stat.peakUp > 0 && stat.peakUpAt != null
       ? `（${formatClockTime(stat.peakUpAt)}）`

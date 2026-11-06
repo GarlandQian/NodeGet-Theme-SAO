@@ -8,10 +8,10 @@ import {
   type HomeSortField,
 } from "@/utils/homeSort";
 
-// 访客首页排序偏好。管理员设站点默认(themeSettings),访客的临时选择写 sessionStorage 覆盖;
+// 首页排序偏好。themeSettings 提供默认排序，临时选择写 sessionStorage 覆盖;
 // 选回与默认一致即清除覆盖(将来站长改默认仍能生效)。NodeGrid 与右上角悬浮控件会分别
 // 调用这个 hook，因此用模块级 external store 保证两处始终读取同一份即时状态。
-const OVERRIDE_KEY = "komaritheme:home-sort";
+const OVERRIDE_KEY = "nodeget-sao:home-sort";
 
 interface SortPref {
   field: HomeSortField;

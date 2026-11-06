@@ -64,7 +64,7 @@ function isLongTermExpire(value: string | number | null | undefined) {
 
 type BillingCycleKind = "month" | "quarter" | "halfYear" | "year" | "lifetime";
 
-/** 中文数字 → 年数，覆盖 Komari 后台的「两年」到「五年」。 */
+/** 中文数字 → 年数，支持「两年」到「五年」。 */
 const CHINESE_YEAR_WORDS: Record<string, number> = {
   "一": 1,
   "两": 2,
@@ -139,7 +139,7 @@ export interface NormalizedBillingCycle {
 }
 
 /**
- * 严格按照 Komari 后台计费周期规则进行归一化：
+ * 将 NodeGet billing_metadata 的周期信息归一化为显示标签：
  * 1. 按预设周期（日历续费）：数值相近时按对应日历周期计算
  *    常用数值：30（月）、92（季）、180/182（半年）、365（年）、730（两年）、1095（三年）等
  * 2. 按自定义天数：当输入其他天数时（如 7, 45, 100），严格按天数续费
@@ -154,7 +154,7 @@ export function normalizeBillingCycle(
   if (raw !== "" && Number.isFinite(numeric)) {
     if (numeric === -1) return { kind: "lifetime", days: -1 };
 
-    // Komari 后台预设方案的相近数值匹配
+    // 常见账单周期的相近天数匹配
     if (numeric >= 28 && numeric <= 31) return { kind: "month", days: 30 };
     if (numeric >= 89 && numeric <= 93) return { kind: "quarter", days: 90 };
     if (numeric >= 180 && numeric <= 184) return { kind: "halfYear", days: 180 };

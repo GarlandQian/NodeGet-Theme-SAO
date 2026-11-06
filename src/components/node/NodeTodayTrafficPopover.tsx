@@ -1,3 +1,4 @@
+import { hasTrafficData, hasRateData } from "@/utils/trafficStats";
 import {
   useCallback,
   useEffect,
@@ -293,13 +294,13 @@ function TodayTrafficPopoverBody({ traffic }: { traffic: NodeTodayTrafficView })
     );
   }
 
-  if (!stat || !stat.hasSamples) {
+  if (!stat || !hasTrafficData(stat)) {
     return (
       <>
         {isError && (
           <TrafficRefreshError isFetching={isFetching} refetch={refetch} />
         )}
-        <div className="node-traffic-popover-empty">今日暂无采样数据</div>
+        <div className="node-traffic-popover-empty">{stat?.statusMessage || "今日暂无流量快照"}</div>
       </>
     );
   }
@@ -310,7 +311,7 @@ function TodayTrafficPopoverBody({ traffic }: { traffic: NodeTodayTrafficView })
         <TrafficRefreshError isFetching={isFetching} refetch={refetch} />
       )}
       <div className="node-traffic-popover-head">
-        <span>今日流量</span>
+        <span>今日流量{stat.partial ? " · 部分时段" : ""}</span>
       </div>
       <div className="node-traffic-popover-rows">
         <PopoverRow
@@ -331,7 +332,7 @@ function TodayTrafficPopoverBody({ traffic }: { traffic: NodeTodayTrafficView })
         <PopoverRow
           icon={<span className="node-traffic-icon is-up"><ArrowUp size={12} strokeWidth={2.4} /></span>}
           label="最高上行"
-          value={formatByteRateLabel(stat.peakUp)}
+          value={hasRateData(stat) ? formatByteRateLabel(stat.peakUp) : "—"}
           note={
             stat.peakUp > 0 && stat.peakUpAt != null
               ? formatClockTime(stat.peakUpAt)
@@ -341,7 +342,7 @@ function TodayTrafficPopoverBody({ traffic }: { traffic: NodeTodayTrafficView })
         <PopoverRow
           icon={<span className="node-traffic-icon is-down"><ArrowDown size={12} strokeWidth={2.4} /></span>}
           label="最高下行"
-          value={formatByteRateLabel(stat.peakDown)}
+          value={hasRateData(stat) ? formatByteRateLabel(stat.peakDown) : "—"}
           note={
             stat.peakDown > 0 && stat.peakDownAt != null
               ? formatClockTime(stat.peakDownAt)

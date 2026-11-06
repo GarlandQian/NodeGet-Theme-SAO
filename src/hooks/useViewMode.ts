@@ -4,8 +4,8 @@ import { MOBILE_VIEWPORT_QUERY, subscribeMediaQuery } from "@/utils/mediaQuery";
 import { isNodeViewMode, type NodeViewMode } from "@/utils/themeSettings";
 
 // Legacy keys retained so session view-mode overrides survive the rename.
-const DESKTOP_OVERRIDE_KEY = "komaritheme:node-view-mode-session:desktop";
-const MOBILE_OVERRIDE_KEY = "komaritheme:node-view-mode-session:mobile";
+const DESKTOP_OVERRIDE_KEY = "nodeget-sao:node-view-mode-session:desktop";
+const MOBILE_OVERRIDE_KEY = "nodeget-sao:node-view-mode-session:mobile";
 export const MOBILE_VIEW_MODE_QUERY = MOBILE_VIEWPORT_QUERY;
 // 快捷切换按钮的循环顺序：大卡 → 小卡 → 迷你 → 列表 → 大卡……
 const VIEW_MODE_CYCLE: readonly NodeViewMode[] = ["large", "compact", "mini", "list"];

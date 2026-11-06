@@ -1,3 +1,4 @@
+import { hasTrafficData, hasRateData } from "@/utils/trafficStats";
 import { Fragment, Suspense, lazy, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { ArrowDown, ArrowUp, ChevronDown, ChevronLeft, RefreshCw } from "lucide-react";
@@ -8,7 +9,7 @@ import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useTodayTrafficStats } from "@/hooks/useTodayTrafficStats";
 import { useVisibleNodes } from "@/hooks/useVisibleNodes";
 import { formatByteRateLabel, formatBytes } from "@/utils/format";
-import type { NodeInfo } from "@/types/komari";
+import type { NodeInfo } from "@/types/models";
 import type { TodayTrafficSample, TodayTrafficStat } from "@/utils/trafficStats";
 
 const DAY_FORMATTER = new Intl.DateTimeFormat("zh-CN", {
@@ -155,22 +156,22 @@ export function Traffic() {
       })
       .sort(
         (left, right) =>
-          Number(right.stat.hasSamples) - Number(left.stat.hasSamples) ||
+          Number(hasTrafficData(right.stat)) - Number(hasTrafficData(left.stat)) ||
           right.total - left.total ||
           left.node.weight - right.node.weight,
       );
   }, [nodes, trafficQuery.data?.rows]);
   const { sampledDetails, totalUp, totalDown, peakUp, peakDown } = useMemo(() => {
-    const sampled = details.filter((detail) => detail.stat.hasSamples);
+    const sampled = details.filter((detail) => hasTrafficData(detail.stat));
     return {
       sampledDetails: sampled,
       totalUp: sampled.reduce((sum, detail) => sum + detail.stat.trafficUp, 0),
       totalDown: sampled.reduce((sum, detail) => sum + detail.stat.trafficDown, 0),
-      peakUp: sampled.reduce<TrafficDetail | null>(
+      peakUp: details.filter((detail) => hasRateData(detail.stat)).reduce<TrafficDetail | null>(
         (best, detail) => (!best || detail.stat.peakUp > best.stat.peakUp ? detail : best),
         null,
       ),
-      peakDown: sampled.reduce<TrafficDetail | null>(
+      peakDown: details.filter((detail) => hasRateData(detail.stat)).reduce<TrafficDetail | null>(
         (best, detail) => (!best || detail.stat.peakDown > best.stat.peakDown ? detail : best),
         null,
       ),
@@ -201,7 +202,7 @@ export function Traffic() {
       {nodes.length === 0 ? (
         <div className="flex h-[40vh] flex-col items-center justify-center gap-2 text-(--text-tertiary)">
           <span className="text-[15px]">暂无节点数据</span>
-          <span className="text-[12px]">等待后端推送或前往管理后台添加</span>
+          <span className="text-[12px]">当前主控筛选下暂无可展示的节点</span>
         </div>
       ) : trafficQuery.isPending ? (
         <div className="flex h-[40vh] items-center justify-center">
@@ -217,6 +218,11 @@ export function Traffic() {
         </section>
       ) : (
         <>
+          {details.some(({ stat }) => stat.statusMessage || !hasTrafficData(stat)) && (
+            <p role="status" className="rounded-xl border border-amber-500/25 bg-amber-500/5 px-4 py-3 text-[13px] text-(--text-secondary)">
+              部分节点或时段的数据不完整，汇总仅包含已有流量快照。标有 * 的结果未覆盖整个查询时段。
+            </p>
+          )}
           <section className="traffic-summary-grid" aria-label="今日流量汇总">
             <article className="traffic-summary-card">
               <div className="traffic-summary-head">
@@ -227,8 +233,8 @@ export function Traffic() {
                 {sampledDetails.length > 0 ? formatBytes(totalUp + totalDown) : "—"}
               </strong>
               <div className="traffic-summary-directions">
-                <span><ArrowUp size={13} aria-hidden />{formatBytes(totalUp)}</span>
-                <span><ArrowDown size={13} aria-hidden />{formatBytes(totalDown)}</span>
+                <span><ArrowUp size={13} aria-hidden />{sampledDetails.length ? formatBytes(totalUp) : "—"}</span>
+                <span><ArrowDown size={13} aria-hidden />{sampledDetails.length ? formatBytes(totalDown) : "—"}</span>
               </div>
             </article>
 
@@ -271,7 +277,7 @@ export function Traffic() {
                   const samples = trafficQuery.data?.samplesByUuid[node.uuid] ?? [];
                   return (
                     <Fragment key={node.uuid}>
-                      <tr data-empty={!stat.hasSamples || undefined}>
+                      <tr data-empty={!hasTrafficData(stat) || undefined}>
                         <td>
                           <Link
                             to={`/instance/${encodeURIComponent(node.uuid)}`}
@@ -283,20 +289,20 @@ export function Traffic() {
                           </Link>
                         </td>
                         <td data-numeric data-strong>
-                          {stat.hasSamples ? (
+                          {hasTrafficData(stat) ? (
                             <span className="traffic-volume-value">
-                              <strong>{formatBytes(total)}</strong>
+                              <strong>{formatBytes(total)}{stat.partial ? " *" : ""}</strong>
                               <small>↑ {formatBytes(stat.trafficUp)} · ↓ {formatBytes(stat.trafficDown)}</small>
                             </span>
                           ) : (
-                            <span className="traffic-no-data">无数据</span>
+                            <span className="traffic-no-data">{stat.statusMessage || "暂无流量快照"}</span>
                           )}
                         </td>
                         <td data-numeric>
-                          {stat.hasSamples ? <PeakValue value={stat.peakUp} timeMs={stat.peakUpAt} /> : "—"}
+                          {hasRateData(stat) ? <PeakValue value={stat.peakUp} timeMs={stat.peakUpAt} /> : "—"}
                         </td>
                         <td data-numeric>
-                          {stat.hasSamples ? <PeakValue value={stat.peakDown} timeMs={stat.peakDownAt} /> : "—"}
+                          {hasRateData(stat) ? <PeakValue value={stat.peakDown} timeMs={stat.peakDownAt} /> : "—"}
                         </td>
                         <td data-action>
                           <TrafficDetailToggle
@@ -328,14 +334,14 @@ export function Traffic() {
               const detailId = `traffic-mobile-detail-${node.uuid}`;
               const samples = trafficQuery.data?.samplesByUuid[node.uuid] ?? [];
               return (
-                <article className="traffic-node-card" key={node.uuid} data-empty={!stat.hasSamples || undefined}>
+                <article className="traffic-node-card" key={node.uuid} data-empty={!hasTrafficData(stat) || undefined}>
                   <header className="traffic-node-card-head">
                     <Link to={`/instance/${encodeURIComponent(node.uuid)}`} className="assets-node-link">
                       <Flag region={node.region} size={12} />
                       <span>{node.name}</span>
                     </Link>
                     <div className="traffic-node-card-actions">
-                      <strong>{stat.hasSamples ? formatBytes(total) : "无数据"}</strong>
+                      <strong>{hasTrafficData(stat) ? `${formatBytes(total)}${stat.partial ? " *" : ""}` : stat.statusMessage || "暂无流量快照"}</strong>
                       <TrafficDetailToggle
                         expanded={expanded}
                         controlsId={detailId}
@@ -343,7 +349,7 @@ export function Traffic() {
                       />
                     </div>
                   </header>
-                  {stat.hasSamples && (
+                  {hasTrafficData(stat) && (
                     <>
                       <div className="traffic-node-card-directions">
                         <span>↑ {formatBytes(stat.trafficUp)}</span>

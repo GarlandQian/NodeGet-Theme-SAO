@@ -14,7 +14,7 @@ import {
   type RenewalReminderSource,
 } from "@/utils/renewalReminder";
 
-const STORAGE_KEY = "komari-sao:renewal-reminders:v1";
+const STORAGE_KEY = "nodeget-sao:renewal-reminders:v1";
 const LEGACY_STORAGE_KEY = "lumina-renewal-reminders-v1";
 const MAX_VISIBLE_ROWS = 4;
 const CLOCK_REFRESH_MS = 60 * 60 * 1000;

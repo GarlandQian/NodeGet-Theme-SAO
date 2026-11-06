@@ -6,7 +6,7 @@ import type {
   PingLossColors,
   PingLossThresholds,
   TrafficSpectrumColors,
-} from "@/types/komari";
+} from "@/types/models";
 import {
   DEFAULT_PING_LATENCY_COLORS,
   DEFAULT_PING_LATENCY_THRESHOLDS,

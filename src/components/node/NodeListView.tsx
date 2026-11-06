@@ -1,3 +1,4 @@
+import { NodeUnavailable } from "./NodeUnavailable";
 import { memo, useCallback, useState } from "react";
 import { Link } from "react-router-dom";
 import { ArrowDown, ArrowUp, CircleDollarSign } from "lucide-react";
@@ -14,7 +15,9 @@ import { LatencyBars } from "./LatencyBars";
 import { HealthBucketTooltip } from "./HealthBucketTooltip";
 import { formatOsLabel, joinTagTitle, nodeDetailLinkLabels } from "./nodeCardShared";
 import { formatHealthBucketTooltip } from "./pingBucketText";
-import type { PingOverviewTaskLoadState } from "@/types/komari";
+import type { PingDataIssue, PingOverviewTaskLoadState } from "@/types/models";
+import { PingDataNotice } from "./PingDataNotice";
+import { pingIssueLabel } from "@/utils/pingStatus";
 
 const GAUGE_SEGMENTS = 14;
 // 列表网络列的延迟柱数:比卡片(24)少,配窄列宽,柱子仍清晰可读。
@@ -43,9 +46,19 @@ export function resolveListPingState(
 export function formatListPingStatus(
   latency: number | null,
   state: ListPingState,
+  dataIssue?: PingDataIssue,
+  hasSamples = false,
 ) {
   const roundedLatency = latency == null ? null : Math.round(latency);
   const value = roundedLatency == null ? null : `${roundedLatency} 毫秒`;
+  if (dataIssue) {
+    const detail = `${dataIssue.message}${value != null && state === "error" ? "；显示上次数据" : ""}`;
+    return {
+      visibleText: roundedLatency == null ? pingIssueLabel(dataIssue)! : `${roundedLatency}`,
+      title: detail,
+      ariaText: value == null ? detail : `${value}，${detail}`,
+    };
+  }
   if (value != null) {
     if (state === "error") {
       return {
@@ -88,6 +101,11 @@ export function formatListPingStatus(
         ariaText: "首页 Ping 加载失败",
       };
     default:
+      if (hasSamples) return {
+        visibleText: "超时",
+        title: "最近一次 Ping 未成功响应",
+        ariaText: "最近一次 Ping 超时",
+      };
       return {
         visibleText: "无样本",
         title: "暂无有效 Ping 样本",
@@ -171,6 +189,7 @@ function StackLine({
 function ListLatency({
   latency,
   loadState,
+  dataIssue,
   hasRealHomepagePingBinding,
   pingIsAssigned,
   latencyColor,
@@ -179,6 +198,7 @@ function ListLatency({
 }: {
   latency: number | null;
   loadState: PingOverviewTaskLoadState | undefined;
+  dataIssue?: PingDataIssue;
   hasRealHomepagePingBinding: boolean;
   pingIsAssigned: boolean;
   latencyColor: string;
@@ -191,7 +211,7 @@ function ListLatency({
     hasRealHomepagePingBinding,
     pingIsAssigned,
   );
-  const status = formatListPingStatus(latency, state);
+  const status = formatListPingStatus(latency, state, dataIssue, buckets.some(bucket => bucket.total > 0));
   const hoveredBucket = hoveredIndex == null ? null : (buckets[hoveredIndex] ?? null);
   const tooltip = hoveredBucket
     ? formatHealthBucketTooltip(hoveredBucket, "latency")
@@ -210,6 +230,7 @@ function ListLatency({
       >
         {status.visibleText}
         {latency != null && <small>ms</small>}
+        {latency != null && <PingDataNotice issue={dataIssue} />}
       </span>
       <span className="node-list-latency-bars">
         <LatencyBars
@@ -236,6 +257,10 @@ const NodeRow = memo(function NodeRow({ uuid }: { uuid: string }) {
     return <div className="node-list-row is-loading" aria-busy />;
   }
 
+  if (model.node.online === null) {
+    return <NodeUnavailable node={model.node} className="node-list-row" />;
+  }
+
   const {
     node,
     traffic,
@@ -259,7 +284,7 @@ const NodeRow = memo(function NodeRow({ uuid }: { uuid: string }) {
     hasRealHomepagePingBinding,
     ping.isAssigned,
   );
-  const listPingStatus = formatListPingStatus(ping.lastValue, listPingState);
+  const listPingStatus = formatListPingStatus(ping.lastValue, listPingState, ping.dataIssue, ping.loss != null);
   const detailLabels = nodeDetailLinkLabels(node.name, osName);
   const usedPct = `${Math.round(clamp01(traffic.fraction) * 100)}%`;
   const rowLabel = [
@@ -377,6 +402,7 @@ const NodeRow = memo(function NodeRow({ uuid }: { uuid: string }) {
         <ListLatency
           latency={ping.lastValue}
           loadState={ping.loadState}
+          dataIssue={ping.dataIssue}
           hasRealHomepagePingBinding={hasRealHomepagePingBinding}
           pingIsAssigned={ping.isAssigned}
           latencyColor={latencyColor}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { LoadRecord } from "@/types/komari";
+import type { LoadRecord } from "@/types/models";
 import {
   buildTodayTrafficMetricSamples,
   buildTodayTrafficRecordSamples,

@@ -9,9 +9,9 @@ import {
 
 describe("MatrixPatternEditor Component & Pattern Utilities", () => {
   it("renders 100 cells for 20x5 grid in static markup", () => {
-    const onChange = vi.fn();
+    const onApply = vi.fn();
     const html = renderToStaticMarkup(
-      <MatrixPatternEditor value={null} onChange={onChange} />,
+      <MatrixPatternEditor value={null} onApply={onApply} />,
     );
 
     // 检查预设按钮
@@ -35,18 +35,18 @@ describe("MatrixPatternEditor Component & Pattern Utilities", () => {
   });
 
   it("renders empty canvas when value is an empty array", () => {
-    const onChange = vi.fn();
+    const onApply = vi.fn();
     const html = renderToStaticMarkup(
-      <MatrixPatternEditor value={[]} onChange={onChange} />,
+      <MatrixPatternEditor value={[]} onApply={onApply} />,
     );
 
     expect(html).toContain("已点亮 0 / 100 格");
   });
 
   it("renders with EVA palette styling when colorTheme is eva", () => {
-    const onChange = vi.fn();
+    const onApply = vi.fn();
     const html = renderToStaticMarkup(
-      <MatrixPatternEditor value={null} onChange={onChange} colorTheme="eva" />,
+      <MatrixPatternEditor value={null} onApply={onApply} colorTheme="eva" />,
     );
 
     expect(html).toContain("mao-pattern-canvas is-eva");

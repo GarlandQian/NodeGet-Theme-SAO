@@ -2,8 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import UplotReact from "uplot-react";
 import type uPlot from "uplot";
 import { Eye, EyeOff, RefreshCw } from "lucide-react";
-import { usePingRecords, usePingRecordStats, usePublicPingTasks } from "@/hooks/useRecords";
-import { historyRequestErrorMessage } from "@/services/requestErrors";
+import { usePingRecords } from "@/hooks/useRecords";
+import { pingRequestIssue } from "@/utils/pingStatus";
 import { InstancePanel, InstanceChartLoading } from "./InstancePanel";
 import {
   buildChartTooltipHooks,
@@ -24,9 +24,9 @@ import {
 } from "./chartData";
 import { latencyHeatColor, lossHeatColor } from "@/utils/metricTone";
 import { historyChartRangeSeconds, historyCoverageLabel } from "@/utils/historyRange";
-import { reconcilePingMetricStats, resolvePingChartInterval, resolvePingSampleCounts } from "@/utils/pingMetrics";
+import { resolvePingChartInterval, resolvePingSampleCounts } from "@/utils/pingMetrics";
 import { usePreferences } from "@/hooks/usePreferences";
-import type { PingRecord, PingTaskStats } from "@/types/komari";
+import type { PingRecord, PingRecordsResponse, PingTaskStats } from "@/types/models";
 import type { TimedMetricPoint } from "./chartData";
 
 interface WeightedLatency {
@@ -70,14 +70,10 @@ export function summarizePingRecords(records: PingRecord[]) {
   const lost = samples.reduce((sum, sample) => sum + sample.lost, 0);
   const validCount = valid.reduce((sum, sample) => sum + sample.weight, 0);
 
-  let latest: number | null = null;
-  for (let index = samples.length - 1; index >= 0; index -= 1) {
-    const { record, valid: count } = samples[index];
-    if (record.value >= 0 && count > 0) {
-      latest = record.value;
-      break;
-    }
-  }
+  const last = samples[samples.length - 1];
+  const latest = last && last.record.value >= 0 && last.valid > 0
+    ? last.record.value
+    : null;
 
   return {
     latest,
@@ -96,6 +92,20 @@ export function summarizePingRecords(records: PingRecord[]) {
 }
 
 const EMPTY_PING_STATS: PingTaskStats[] = [];
+
+export function pingChartStatusMessage(
+  data: Pick<PingRecordsResponse, "records" | "quality" | "message"> | undefined,
+  isError: boolean,
+  error: unknown,
+): string | undefined {
+  const messages: string[] = [];
+  if (data?.quality === "partial") messages.push(data.message || "部分 Ping 数据无法读取，统计不完整");
+  if (isError) {
+    const issue = pingRequestIssue(error);
+    messages.push(`${issue.message}${data?.records.length ? "；显示上次数据" : ""}`);
+  }
+  return messages.length ? messages.join(" · ") : undefined;
+}
 const MAX_RENDER_POINTS = 160;
 // 1 即关闭平滑(smoothByCount 对 <=1 原样返回);保留常量便于调参,非削峰模式当前不平滑。
 const SMOOTH_WINDOW_POINTS = 1;
@@ -118,13 +128,8 @@ export function PingChart({
     isLoading,
     refetch: refetchRecords,
   } = usePingRecords(uuid, hours, active);
-  const auxiliaryEnabled = active && Boolean(uuid);
-  const { data: serverStats, refetch: refetchStats } = usePingRecordStats(uuid, hours, auxiliaryEnabled);
-  const { data: publicTasks, refetch: refetchTasks } = usePublicPingTasks(auxiliaryEnabled && Boolean(data?.records.length));
-  const pingStats = useMemo(
-    () => reconcilePingMetricStats(serverStats ?? data?.stats ?? EMPTY_PING_STATS, data?.records ?? []),
-    [data, serverStats],
-  );
+  // 原生统计在降采样前计算，展示桶不能覆盖完整区间的统计结果。
+  const pingStats = data?.stats ?? EMPTY_PING_STATS;
   const { resolvedAppearance } = usePreferences();
   const { w, h, ref: chartSizeRef } = useResponsiveChartSize("wide");
   const [hiddenTasks, setHiddenTasks] = useState<Set<number>>(new Set());
@@ -141,18 +146,16 @@ export function PingChart({
   const isDark = resolvedAppearance === "dark";
   // 补齐名称时保留曲线里的任务顺序，避免线路颜色跳变。
   const tasks = useMemo(() => {
-    const publicById = new Map(publicTasks?.map((task) => [task.id, task] as const));
     const statsById = new Map(pingStats.map((stat) => [stat.taskId, stat] as const));
     return (data?.tasks ?? []).map((task) => {
-      const publicTask = publicById.get(task.id);
       const stat = statsById.get(task.id);
-      return publicTask ?? {
+      return {
         ...task,
         name: stat?.name || task.name,
         interval: stat?.interval || task.interval,
       };
     });
-  }, [data?.tasks, pingStats, publicTasks]);
+  }, [data?.tasks, pingStats]);
   const taskLabels = useMemo(() => {
     const counts = new Map<string, number>();
     for (const task of tasks) {
@@ -461,11 +464,9 @@ export function PingChart({
 
   const refetchAll = () => {
     void refetchRecords();
-    if (auxiliaryEnabled) {
-      void refetchStats();
-      if (data?.records.length) void refetchTasks();
-    }
   };
+
+  const statusMessage = pingChartStatusMessage(data, isError, error);
 
   const toggleTask = (taskId: number) => {
     setHiddenTasks((prev) => {
@@ -488,7 +489,7 @@ export function PingChart({
     return (
       <InstancePanel title="Ping 图表">
         <div className="instance-empty">
-          <span>{historyRequestErrorMessage(error, "延迟历史加载失败")}</span>
+          <span>{statusMessage}</span>
           <button
             type="button"
             className="instance-toggle-button"
@@ -506,13 +507,13 @@ export function PingChart({
   if (!data?.records.length) {
     return (
       <InstancePanel title="Ping 图表">
-        <div className="instance-empty">暂无延迟记录</div>
+        <div className="instance-empty">{statusMessage ?? "暂无延迟记录"}</div>
       </InstancePanel>
     );
   }
 
   return (
-    <InstancePanel title="Ping 图表" description={coverageLabel ?? undefined}>
+    <InstancePanel title="Ping 图表" description={[statusMessage, coverageLabel].filter(Boolean).join(" · ") || undefined}>
       <div className="instance-ping-toolbar">
         <SwitchToggle
           label="削峰平滑"

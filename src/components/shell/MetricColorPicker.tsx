@@ -59,7 +59,7 @@ export function MetricColorPicker({ hidden = false }: { hidden?: boolean }) {
       hidden={hidden}
     >
       <div className="metric-color-picker-head">
-        <span>配色自定义</span>
+        <span>配色自定义 · 本机保存</span>
         <button
           type="button"
           className="metric-color-reset-all"
@@ -69,7 +69,7 @@ export function MetricColorPicker({ hidden = false }: { hidden?: boolean }) {
           全部重置
         </button>
       </div>
-      {saveError && <div className="metric-color-error">保存失败（请确认已登录管理员）</div>}
+      {saveError && <div className="metric-color-error">本机保存失败，请检查浏览器存储权限</div>}
       {METRIC_COLOR_GROUPS.map((group) => (
         <div className="metric-color-group" key={group.id}>
           <div className="metric-color-group-title">{group.label}</div>

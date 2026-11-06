@@ -1,0 +1,11 @@
+{
+  "user_preferences": {
+    "site_name": "NodeGet-Theme-SAO",
+    "site_logo": "",
+    "footer": "Powered by NodeGet · SAO",
+    "theme_settings": {
+      "showPriceForGuests": false
+    }
+  },
+  "site_tokens": []
+}

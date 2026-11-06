@@ -11,7 +11,7 @@ import type {
   PingLatencyColors,
   PingLatencyThresholds,
   PingOverviewBucket,
-} from "@/types/komari";
+} from "@/types/models";
 
 interface LatencyBarsProps {
   buckets: PingOverviewBucket[];
