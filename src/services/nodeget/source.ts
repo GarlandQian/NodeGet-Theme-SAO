@@ -7,7 +7,7 @@ import {
 } from "./normalize";
 import { PingReader } from "./ping";
 import { aborted, NodeGetRpcError, waitFor, type RequestOptions, type RpcCaller } from "./rpc";
-import { TrafficReader } from "./traffic";
+import { readExtensionTrafficPeriod, TrafficReader } from "./traffic";
 
 export interface SourceStatus {
   id: string;
@@ -25,6 +25,7 @@ export class NodeGetSource {
   private dynamics = new Map<string, Row>();
   private dynamicUpdatedAt = 0;
   private nodesUpdatedAt = 0;
+  private metadataStatus = "unavailable";
   private nodesPending: Promise<NodeInfo[]> | null = null;
   private dynamicsPending: Promise<Map<string, Row>> | null = null;
   private discoveryPending: Promise<void> | null = null;
@@ -86,6 +87,7 @@ export class NodeGetSource {
         for (const [uuid, item] of data) this.metadata.set(uuid, item);
       }
       const statusOf = (result: PromiseSettledResult<unknown>) => result.status === "fulfilled" ? "ready" : isAccessDeniedError(result.reason) ? "forbidden" : "unavailable";
+      this.metadataStatus = statusOf(metadataResult);
       const oldNodes = new Map(this.nodes.map(node => [text(node.native_uuid), node]));
       this.nodes = this.uuids.map(uuid => {
         const node = nodeFromData(this.id, this.name, uuid, this.metadata.get(uuid) ?? {}, statics.get(uuid) ?? {}, this.dynamics.get(uuid) ?? {}, {
@@ -147,14 +149,23 @@ export class NodeGetSource {
           missing_fields: missingFields, updated_at: time,
         }];
         const current = this.traffic.readCurrent(uuid);
-        const periodStart = timestamp(this.metadata.get(uuid)?.metadata_traffic_period_start);
-        const period = this.traffic.readPeriod(uuid, periodStart);
+        const metadata = this.metadata.get(uuid) ?? {};
+        const extension = readExtensionTrafficPeriod(metadata, now);
+        const periodStart = extension?.start ?? timestamp(metadata.metadata_traffic_period_start);
+        const period = !extension || extension.canReadSnapshots ? this.traffic.readPeriod(uuid, periodStart) : undefined;
+        const cycleUsed = extension?.used;
+        const cycleAvailable = cycleUsed !== undefined || period !== undefined;
+        const cyclePartial = this.metadataStatus !== "ready" || (cycleUsed !== undefined ? extension!.partial : period?.partial);
+        const cycleReason = cycleAvailable && this.metadataStatus !== "ready"
+          ? "流量配置读取失败，显示上次周期用量"
+          : period ? undefined : extension?.reason;
         const value = {
           ...loadRecord(key, dynamic), online: time > 0 ? now - time < 30_000 && time < now + 300_000 : null,
           updated_at: time, source_id: this.id, data_status: time > 0 ? "ready" : "unavailable",
           ...(current && current.updatedAt >= time - 120_000 ? { net_total_up: current.up, net_total_down: current.down } : {}),
-          ...(period ? { traffic_cycle: { up: period.up, down: period.down } } : {}),
-          quality: { traffic_total: current ? "ok" : "counter", traffic_cycle: period ? period.partial ? "partial" : "ok" : "unavailable" },
+          ...(cycleUsed !== undefined ? { traffic_cycle: { used: cycleUsed } } : period ? { traffic_cycle: { up: period.up, down: period.down } } : {}),
+          ...(cycleReason ? { traffic_cycle_reason: cycleReason } : {}),
+          quality: { traffic_total: current ? "ok" : "counter", traffic_cycle: cycleAvailable ? cyclePartial ? "partial" : "ok" : "unavailable" },
         };
         return [key, value];
       }));
@@ -190,7 +201,7 @@ export class NodeGetSource {
         const end = Math.floor(Date.now() / 15_000) * 15_000;
         const results = await Promise.allSettled(this.uuids.map(async uuid => {
           const recent = await this.ping.query(uuid, end - 3_600_000, end);
-          if (!recent.records.length) await this.ping.query(uuid, end - 86_400_000, end);
+          if (!recent.records.length) await this.ping.discover(uuid, end);
         }));
         const failure = results.find((item): item is PromiseRejectedResult => item.status === "rejected");
         if (failure && !this.ping.tasks().length) throw failure.reason;

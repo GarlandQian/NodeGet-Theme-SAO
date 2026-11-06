@@ -43,11 +43,20 @@ describe("resolveFlatConnectionsTcp", () => {
 });
 
 describe("cycleTrafficFromLatest", () => {
+  it("preserves extension totals without fabricating directional traffic", () => {
+    expect(cycleTrafficFromLatest({ traffic_cycle: { used: 2048 } }))
+      .toEqual({ up: null, down: null, used: 2048 });
+    expect(cycleTrafficFromLatest({ traffic_cycle: { used: 0 } }))
+      .toEqual({ up: null, down: null, used: 0 });
+    expect(cycleTrafficFromLatest({ traffic_cycle: { used: -1 } }))
+      .toEqual({ up: null, down: null, used: null });
+  });
+
   it("reads complete native cycle totals before legacy flat fields", () => {
     expect(cycleTrafficFromLatest({
       quality: { traffic_cycle: "ok" },
-      traffic_cycle: { up: 123, down: 456 },
-    })).toEqual({ up: 123, down: 456 });
+      traffic_cycle: { up: 123, down: 456, used: null },
+    })).toEqual({ up: 123, down: 456, used: null });
   });
   it("extracts cycle traffic when quality.traffic_cycle is ok", () => {
     expect(
@@ -56,15 +65,15 @@ describe("cycleTrafficFromLatest", () => {
         traffic_up: 1048576,
         traffic_down: 2097152,
       }),
-    ).toEqual({ up: 1048576, down: 2097152 });
+    ).toEqual({ up: 1048576, down: 2097152, used: null });
   });
 
   it("extracts cycle traffic from traffic_cycle object", () => {
     expect(
       cycleTrafficFromLatest({
-        traffic_cycle: { up: 5000, down: 6000 },
+        traffic_cycle: { up: 5000, down: 6000, used: null },
       }),
-    ).toEqual({ up: 5000, down: 6000 });
+    ).toEqual({ up: 5000, down: 6000, used: null });
   });
 
   it("returns null when no cycle traffic is reported (no period metadata)", () => {
@@ -73,7 +82,7 @@ describe("cycleTrafficFromLatest", () => {
         net_total_up: 1048576,
         net_total_down: 2097152,
       }),
-    ).toEqual({ up: null, down: null });
+    ).toEqual({ up: null, down: null, used: null });
   });
 
   it("returns null when quality.traffic_cycle is not ok", () => {
@@ -83,6 +92,6 @@ describe("cycleTrafficFromLatest", () => {
         traffic_up: 1048576,
         traffic_down: 2097152,
       }),
-    ).toEqual({ up: null, down: null });
+    ).toEqual({ up: null, down: null, used: null });
   });
 });

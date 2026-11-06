@@ -128,6 +128,7 @@ function emptyMetrics(info: NodeInfo, online: boolean | null): NodeMetrics {
     trafficDown: 0,
     cycleUp: null,
     cycleDown: null,
+    cycleUsed: null,
     uptime: 0,
     load1: 0,
     load5: 0,
@@ -232,7 +233,9 @@ function shallowEqualMetrics(a: NodeMetrics, b: NodeMetrics) {
     a.trafficDown === b.trafficDown &&
     a.cycleUp === b.cycleUp &&
     a.cycleDown === b.cycleDown &&
+    a.cycleUsed === b.cycleUsed &&
     a.cyclePartial === b.cyclePartial &&
+    a.cycleReason === b.cycleReason &&
     a.uptime === b.uptime &&
     a.load1 === b.load1 &&
     a.load5 === b.load5 &&
@@ -275,6 +278,8 @@ function shallowEqualNodeInfo(a: NodeInfo, b: NodeInfo) {
     a.public_remark === b.public_remark &&
     a.traffic_limit === b.traffic_limit &&
     a.traffic_limit_type === b.traffic_limit_type &&
+    a.traffic_billing_mode === b.traffic_billing_mode &&
+    a.traffic_period === b.traffic_period &&
     a.created_at === b.created_at
     // updated_at 是未展示的心跳字段，不应触发整个节点列表重渲染。
   );
@@ -501,7 +506,7 @@ function asRecord(value: unknown): RealtimePayload {
     : {};
 }
 
-export function cycleTrafficFromLatest(raw: unknown): { up: number | null; down: number | null } {
+export function cycleTrafficFromLatest(raw: unknown): { up: number | null; down: number | null; used: number | null } {
   const payload = asRecord(raw);
   const quality = asRecord(payload.quality);
   const value = (input: unknown) =>
@@ -512,15 +517,16 @@ export function cycleTrafficFromLatest(raw: unknown): { up: number | null; down:
     return {
       up: value(cycleRecord.up ?? cycleRecord.traffic_up),
       down: value(cycleRecord.down ?? cycleRecord.traffic_down),
+      used: value(cycleRecord.used),
     };
   }
   if (quality.traffic_cycle === "ok") {
-    return { up: value(payload.traffic_up), down: value(payload.traffic_down) };
+    return { up: value(payload.traffic_up), down: value(payload.traffic_down), used: null };
   }
   if (payload.cycle_up != null || payload.cycle_down != null) {
-    return { up: value(payload.cycle_up), down: value(payload.cycle_down) };
+    return { up: value(payload.cycle_up), down: value(payload.cycle_down), used: null };
   }
-  return { up: null, down: null };
+  return { up: null, down: null, used: null };
 }
 
 function asBoolean(value: unknown, fallback: boolean): boolean {
@@ -674,7 +680,10 @@ function applyLatestStatus(records: Record<string, unknown>) {
     const cycle = cycleTrafficFromLatest(rawRecord);
     merged.cycleUp = cycle.up;
     merged.cycleDown = cycle.down;
+    merged.cycleUsed = cycle.used;
     merged.cyclePartial = asRecord(asRecord(rawRecord).quality).traffic_cycle === "partial";
+    merged.cycleReason = typeof asRecord(rawRecord).traffic_cycle_reason === "string"
+      ? String(asRecord(rawRecord).traffic_cycle_reason) : undefined;
 
     if (!shallowEqualMetrics(prev, merged)) {
       if (nextMetricsByUuid === state.metricsByUuid) {
@@ -775,7 +784,10 @@ function applyNodeSync(
         nextMetrics.dataStatus = String(asRecord(rawRecord).data_status || "");
         nextMetrics.cycleUp = cycle.up;
         nextMetrics.cycleDown = cycle.down;
+        nextMetrics.cycleUsed = cycle.used;
         nextMetrics.cyclePartial = asRecord(asRecord(rawRecord).quality).traffic_cycle === "partial";
+        nextMetrics.cycleReason = typeof asRecord(rawRecord).traffic_cycle_reason === "string"
+          ? String(asRecord(rawRecord).traffic_cycle_reason) : undefined;
       } else {
         nextMetrics = base;
       }

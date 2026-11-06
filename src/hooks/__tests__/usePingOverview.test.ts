@@ -148,6 +148,44 @@ function pingOverviewResponse(taskId: number, value: number) {
 }
 
 describe("homepage ping polling selection", () => {
+  it("renders completed automatic nodes without waiting for the slowest node", async () => {
+    let release!: () => void;
+    const slow = new Promise<void>(resolve => { release = resolve; });
+    const first = pingOverviewResponse(7, 42);
+    const second = { ...first.records[0]!, client: "node-b", value: 88 };
+    const snapshots: Array<Array<{ uuid: string; state?: string; value: number | null }>> = [];
+    const pending = buildPingOverviewMap(1, ["node-a", "node-b"], {}, [], undefined, undefined,
+      async (_hours, _taskId, options) => {
+        options?.onProgress?.(first, ["node-a"]);
+        await slow;
+        return { ...first, records: [...first.records, second], tasks: [{ ...first.tasks[0]!, clients: ["node-a", "node-b"] }] };
+      }, undefined, result => snapshots.push([...result.singleItems].map(([uuid, item]) => ({ uuid, state: item.loadState, value: item.lastValue }))));
+    await vi.waitFor(() => expect(snapshots).toContainEqual([
+      { uuid: "node-a", state: "ready", value: 42 },
+      { uuid: "node-b", state: "pending", value: null },
+    ]));
+    release();
+    const result = await pending;
+    expect(result.singleItems.get("node-b")).toMatchObject({ loadState: "ready", lastValue: 88 });
+  });
+
+  it.each([false, true])("keeps a completed node when a later node fails (explicit binding: %s)", async explicit => {
+    const first = pingOverviewResponse(7, 42);
+    const snapshots: Array<Array<{ uuid: string; state?: string; value: number | null }>> = [];
+    const result = await buildPingOverviewMap(1, ["node-a", "node-b"], explicit ? { 7: ["node-a", "node-b"] } : {}, [], undefined, undefined,
+      async (_hours, _taskId, options) => {
+        options?.onProgress?.(first, ["node-a"]);
+        throw new Error("Slow node disconnected");
+      }, undefined, result => snapshots.push([...result.singleItems].map(([uuid, item]) => ({ uuid, state: item.loadState, value: item.lastValue }))));
+    expect(snapshots).toContainEqual([
+      { uuid: "node-a", state: "ready", value: 42 },
+      { uuid: "node-b", state: "pending", value: null },
+    ]);
+    expect(result.singleItems.get("node-a")).toMatchObject({ loadState: "ready", lastValue: 42 });
+    expect(result.singleItems.get("node-a")?.dataIssue).toBeUndefined();
+    expect(result.singleItems.get("node-b")).toMatchObject({ loadState: "error", lastValue: null });
+  });
+
   it("automatically uses native ICMP tasks without saved homepage bindings and falls back to TCPing", async () => {
     const icmp = pingOverviewResponse(20, 36);
     const tcp = pingOverviewResponse(10, 12);

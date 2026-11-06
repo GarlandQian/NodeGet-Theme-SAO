@@ -104,7 +104,10 @@ export interface NodeMetrics {
   trafficDown: number;
   cycleUp?: number | null;
   cycleDown?: number | null;
+  /** 流量扩展提供的周期已用总量；没有可信上下行拆分时保持方向字段为空。 */
+  cycleUsed?: number | null;
   cyclePartial?: boolean;
+  cycleReason?: string;
   uptime: number;
   load1: number;
   load5: number;

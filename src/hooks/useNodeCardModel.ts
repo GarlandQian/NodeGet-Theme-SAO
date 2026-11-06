@@ -225,7 +225,8 @@ export function useNodeCardModel(
 
     const { loadBaseline } = metaModel;
 
-    // 配额只使用周期快照；缺少快照时不能把开机计数器当作周期用量。
+    // 周期配额使用扩展的已用总量或原生周期快照，不用开机计数器填补缺失。
+    const hasCycle = metrics.cycleUsed != null || (metrics.cycleUp != null && metrics.cycleDown != null);
     const cycleUp = metrics.cycleUp ?? metrics.trafficUp;
     const cycleDown = metrics.cycleDown ?? metrics.trafficDown;
     const trafficUsage = resolveTrafficUsage(
@@ -233,6 +234,7 @@ export function useNodeCardModel(
       cycleUp,
       cycleDown,
       meta.traffic_limit,
+      metrics.cycleUsed,
     );
     const trafficUsedLabel = formatBytes(trafficUsage.used);
     // 不限量时渲染成 ∞，让剩余值和"已用/上限"那行与限量情况保持一致
@@ -242,11 +244,11 @@ export function useNodeCardModel(
       ? "var(--status-success)"
       : trafficUsageColor(trafficUsage.fraction);
     const traffic: TrafficDisplay = {
-      fraction: !trafficUsage.unlimited && metrics.cycleUp == null ? 0 : trafficUsage.fraction,
+      fraction: !trafficUsage.unlimited && !hasCycle ? 0 : trafficUsage.fraction,
       color: trafficColor,
-      remainingLabel: !trafficUsage.unlimited && metrics.cycleUp == null ? "暂无周期数据" : metrics.cyclePartial ? "周期数据不完整" : trafficUsage.unlimited ? "∞" : formatBytes(trafficUsage.remaining),
-      detail: !trafficUsage.unlimited && metrics.cycleUp == null ? `— / ${trafficLimitLabel}` : `${trafficUsedLabel}${metrics.cyclePartial ? " *" : ""} / ${trafficLimitLabel}`,
-      typeLabel: `${trafficTypeLabel(meta.traffic_limit_type)}${metrics.cyclePartial ? " · 周期数据不完整" : ""}`,
+      remainingLabel: !trafficUsage.unlimited && !hasCycle ? metrics.cycleReason || "暂无周期数据" : metrics.cyclePartial ? "周期数据不完整" : trafficUsage.unlimited ? "∞" : formatBytes(trafficUsage.remaining),
+      detail: !trafficUsage.unlimited && !hasCycle ? `— / ${trafficLimitLabel}` : `${trafficUsedLabel}${metrics.cyclePartial ? " *" : ""} / ${trafficLimitLabel}`,
+      typeLabel: `${trafficTypeLabel(meta.traffic_limit_type)}${metrics.cycleReason ? ` · ${metrics.cycleReason}` : metrics.cyclePartial ? " · 周期数据不完整" : ""}`,
     };
 
     return {

@@ -50,8 +50,11 @@ export function resolveTrafficUsage(
   up: number,
   down: number,
   limit: number,
+  totalUsed?: number | null,
 ): TrafficUsage {
-  const used = computeTrafficUsed(type, up, down);
+  const used = typeof totalUsed === "number" && Number.isSafeInteger(totalUsed) && totalUsed >= 0
+    ? totalUsed
+    : computeTrafficUsed(type, up, down);
   const unlimited = !(limit > 0);
   const remaining = unlimited ? 0 : Math.max(0, limit - used);
   const fraction = unlimited ? 0 : Math.max(0, Math.min(1, used / limit));

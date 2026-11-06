@@ -869,7 +869,7 @@ export function NodeGrid() {
     void preloadTodayTrafficStats(queryClient, trafficUuids, Date.now());
   }, [queryClient, trafficUuids]);
   const todayTrafficClock = useMinuteClock();
-  const todayTrafficQuery = useTodayTrafficStats(trafficUuids, todayTrafficClock, "summary");
+  const todayTrafficQuery = useTodayTrafficStats(trafficUuids, todayTrafficClock, "summary", false);
   const latestTrafficTotal = useMemo(() => {
     if (!todayTrafficQuery.data) return null;
     const available = todayTrafficQuery.data.rows.filter(hasTrafficData);

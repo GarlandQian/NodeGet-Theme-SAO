@@ -154,18 +154,19 @@ export function getLoadRecords(uuid: string, hours = 6, options?: RequestOptions
   });
 }
 
-export function getTodayTrafficMetrics(entityIds: string[], startMs: number, endMs: number, options?: RequestOptions): Promise<TodayTrafficMetricResponse> {
+export function getTodayTrafficMetrics(entityIds: string[], startMs: number, endMs: number, options?: RequestOptions & { includeRates?: boolean }): Promise<TodayTrafficMetricResponse> {
   return bounded(options, async request => {
     if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || startMs < 0 || endMs <= startMs) throw new Error("流量查询范围无效");
     const available = await ensureSources(request);
     const series: TrafficMetricSeries[] = [];
     const issues: Record<string, DataIssue> = {};
+    const includeRates = options?.includeRates !== false;
     await Promise.all([...new Set(entityIds)].map(async client => {
       let node: ReturnType<typeof resolveNode>;
       try { node = resolveNode(client, available); } catch (error) { issues[client] = issue(error); return; }
       const [total, history] = await Promise.allSettled([
         node.source.traffic.total(node.uuid, startMs, endMs, request),
-        node.source.history(node.uuid, startMs, endMs, request),
+        includeRates ? node.source.history(node.uuid, startMs, endMs, request) : Promise.resolve([]),
       ]);
       if (total.status === "fulfilled") {
         const data = total.value;
@@ -174,7 +175,7 @@ export function getTodayTrafficMetrics(entityIds: string[], startMs: number, end
         }
         if (data.partial) issues[client] = { status: "partial", message: "流量按已有快照统计，覆盖区间可能不完整" };
       } else issues[client] = issue(total.reason);
-      if (history.status === "fulfilled") {
+      if (includeRates && history.status === "fulfilled") {
         for (const [metricKey, field] of [[RATE_UP_METRIC, "net_out"], [RATE_DOWN_METRIC, "net_in"]] as const) {
           const buckets = new Map<number, { time: string; value: number; count: number }>();
           for (const record of history.value) {
@@ -187,7 +188,7 @@ export function getTodayTrafficMetrics(entityIds: string[], startMs: number, end
           }
           series.push({ metricKey, client, intervalSeconds: 300, quality: "sampled", points: [...buckets.values()] });
         }
-      } else issues[client] ??= { ...issue(history.reason), message: "流量合计可用，速率历史读取失败" };
+      } else if (history.status === "rejected") issues[client] ??= { ...issue(history.reason), message: "流量合计可用，速率历史读取失败" };
     }));
     aborted(request.signal);
     return { series, rangeStartMs: startMs, rangeEndMs: endMs, intervalSeconds: 300, issues };
@@ -228,55 +229,66 @@ export function getPingRecords(uuid: string, hours = 6, options?: RequestOptions
     };
   });
 }
-async function queryOverview(hours: number, taskIds: number[] | undefined, options: RequestOptions & { entityIds?: string[] }): Promise<PingOverviewResponse> {
+interface PingOverviewOptions extends RequestOptions {
+  entityIds?: string[];
+  includeStats?: boolean;
+  /** 每次只包含已完成节点的完整区间结果，未完成节点继续保留加载状态。 */
+  onProgress?: (overview: PingOverviewResponse, entityIds: string[]) => void;
+}
+
+async function queryOverview(hours: number, taskIds: number[] | undefined, options: PingOverviewOptions): Promise<PingOverviewResponse> {
   const available = await ensureSources(options);
   const nodes = await getNodes(options);
-  if (taskIds?.length) await getPublicPingTasks(options);
   const requestRange = range(hours);
   const selected = nodes.filter(node => !options.entityIds || options.entityIds.includes(node.uuid));
-  const jobs = selected.flatMap(node => {
-    const { source, uuid } = resolveNode(node.uuid, available);
-    const ids = taskIds?.filter(id => source.ping.owns(id));
-    if (ids && !ids.length) return [];
-    return (ids ?? [undefined]).map(id => ({
-      client: node.uuid,
-      query: async () => {
-        const data = await source.ping.query(uuid, requestRange.rangeStartMs, requestRange.rangeEndMs, options, id);
-        // NodeGet 的计划任务身份来自执行记录。首页默认无需手工绑定；当最近窗口为空，
-        // 只用一天内的记录发现任务，旧记录不能充当当前窗口的延迟或丢包样本。
-        if (id === undefined && !data.records.length) {
-          const discovered = await source.ping.query(uuid, requestRange.rangeEndMs - 86_400_000, requestRange.rangeEndMs, options);
-          data.partial ||= discovered.partial;
-        }
-        const knownTasks = source.ping.tasks().filter(task => task.clients.includes(node.uuid) && (id === undefined || task.id === id));
-        return { ...data, tasks: [...new Map([...knownTasks, ...data.tasks].map(task => [task.id, task])).values()] };
-      },
-    }));
-  });
-  const results = await Promise.allSettled(jobs.map(job => job.query()));
-  aborted(options.signal);
   const data: PingData[] = [];
   const issues: Record<string, DataIssue> = {};
-  for (let index = 0; index < results.length; index += 1) {
-    const result = results[index]!;
-    const client = jobs[index]!.client;
-    if (result.status === "rejected") {
-      issues[client] = issue(result.reason);
-    } else {
-      data.push(result.value);
-      if (result.value.partial && !issues[client]) issues[client] = { status: "partial", message: "部分 Ping 类型无法读取，统计仅包含可读任务" };
-    }
-  }
-  const partial = Object.keys(issues).length > 0;
-  const tasks = [...new Map(data.flatMap(item => item.tasks).map(task => [task.id, task])).values()];
-  return {
-    ...downsamplePing(data.flatMap(item => item.records), requestRange.rangeStartMs, requestRange.rangeEndMs, 24),
-    tasks, stats: data.flatMap(item => item.stats), ...requestRange, issues,
-    ...(partial ? { quality: "partial" as const, message: "部分主控或 Ping 任务无法读取，统计不完整" } : {}),
+  const response = (entries: PingData[], nodeIssues: Record<string, DataIssue>): PingOverviewResponse => {
+    const partial = Object.keys(nodeIssues).length > 0;
+    return {
+      ...downsamplePing(entries.flatMap(item => item.records), requestRange.rangeStartMs, requestRange.rangeEndMs, 24),
+      tasks: [...new Map(entries.flatMap(item => item.tasks).map(task => [task.id, task])).values()],
+      stats: entries.flatMap(item => item.stats), ...requestRange, issues: { ...nodeIssues },
+      ...(partial ? { quality: "partial" as const, message: "部分主控或 Ping 任务无法读取，统计不完整" } : {}),
+    };
   };
+  const publish = (client: string, entries: PingData[], nodeIssues: Record<string, DataIssue>) => {
+    if (!options.onProgress || options.signal?.aborted) return;
+    try { options.onProgress(response(entries, nodeIssues), [client]); }
+    catch { /* 展示回调不影响其他节点的请求与最终结果。 */ }
+  };
+  await Promise.all(selected.map(async node => {
+    const { source, uuid } = resolveNode(node.uuid, available);
+    try {
+      // 冷启动时直接查询所选节点，再按稳定任务身份筛选；不先扫描整个主控。
+      const taskId = taskIds?.length === 1 && source.ping.owns(taskIds[0]!) ? taskIds[0] : undefined;
+      const result = await source.ping.query(uuid, requestRange.rangeStartMs, requestRange.rangeEndMs, options, taskId);
+      if (!taskIds && !result.records.length) result.partial ||= await source.ping.discover(uuid, requestRange.rangeEndMs, options);
+      aborted(options.signal);
+      const selectedIds = taskIds && new Set(taskIds);
+      const knownTasks = source.ping.tasks().filter(task => task.clients.includes(node.uuid) && (!selectedIds || selectedIds.has(task.id)));
+      const filtered: PingData = {
+        ...result,
+        records: result.records.filter(record => !selectedIds || selectedIds.has(record.task_id)),
+        stats: result.stats.filter(stat => !selectedIds || selectedIds.has(stat.taskId)),
+        tasks: [...new Map([...knownTasks, ...result.tasks.filter(task => !selectedIds || selectedIds.has(task.id))].map(task => [task.id, task])).values()],
+      };
+      data.push(filtered);
+      if (filtered.partial) issues[node.uuid] = { status: "partial", message: "部分 Ping 类型无法读取，统计仅包含可读任务" };
+      publish(node.uuid, [filtered], issues[node.uuid] ? { [node.uuid]: issues[node.uuid]! } : {});
+    } catch (error) {
+      aborted(options.signal);
+      issues[node.uuid] = issue(error);
+      publish(node.uuid, [], { [node.uuid]: issues[node.uuid]! });
+    }
+  }));
+  aborted(options.signal);
+  return response(data, issues);
 }
-export function getPingOverview(hours = 1, taskId?: number, options?: RequestOptions & { entityIds?: string[]; includeStats?: boolean }): Promise<PingOverviewResponse> {
-  return bounded(options, request => queryOverview(hours, taskId === undefined ? undefined : [taskId], { ...request, entityIds: options?.entityIds }));
+export function getPingOverview(hours = 1, taskId?: number, options?: PingOverviewOptions): Promise<PingOverviewResponse> {
+  return bounded(options, request => queryOverview(hours, taskId === undefined ? undefined : [taskId], {
+    ...request, entityIds: options?.entityIds, onProgress: options?.onProgress,
+  }));
 }
 export function getPingOverviewStats(hours: number, taskIds: number[], options?: RequestOptions & { entityIds?: string[] }): Promise<PingTaskStats[]> {
   if (!taskIds.length) return Promise.resolve([]);

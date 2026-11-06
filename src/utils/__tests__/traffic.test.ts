@@ -30,6 +30,14 @@ describe("computeTrafficUsed", () => {
 });
 
 describe("resolveTrafficUsage", () => {
+  it("uses the extension cycle total independently of lifetime directional counters", () => {
+    expect(resolveTrafficUsage("sum", 900, 800, 500, 125))
+      .toMatchObject({ used: 125, remaining: 375, fraction: 0.25 });
+    expect(resolveTrafficUsage("sum", 900, 800, 500, 0))
+      .toMatchObject({ used: 0, remaining: 500, fraction: 0 });
+    expect(resolveTrafficUsage("sum", 30, 70, 500, Number.NaN).used).toBe(100);
+  });
+
   it("derives used/remaining/fraction from a limit", () => {
     const usage = resolveTrafficUsage("sum", 30, 70, 200);
     expect(usage.used).toBe(100);

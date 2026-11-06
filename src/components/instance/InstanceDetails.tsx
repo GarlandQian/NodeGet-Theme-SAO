@@ -50,16 +50,17 @@ export function InstanceDetails({
     </InstancePanel>;
   }
   const uptime = formatUptimeDays(metrics.uptime);
-  const hasCycle = metrics.cycleUp != null && metrics.cycleDown != null;
+  const hasDirectionalCycle = metrics.cycleUp != null && metrics.cycleDown != null;
+  const hasCycle = metrics.cycleUsed != null || hasDirectionalCycle;
   const cycleUp = metrics.cycleUp ?? metrics.trafficUp;
   const cycleDown = metrics.cycleDown ?? metrics.trafficDown;
-  // 按 traffic_limit_type (max/sum/up/down/min) 归并上下行，和卡片、后端保持一致——
-  // 对非 "sum" 节点直接把上下行相加是错的。优先使用 Agent 周期流量，否则兜底开机总流量。
+  // 与首页使用同一周期用量；扩展仅提供总量时不编造上下行拆分。
   const trafficUsage = resolveTrafficUsage(
     meta.traffic_limit_type,
     cycleUp,
     cycleDown,
     meta.traffic_limit,
+    metrics.cycleUsed,
   );
   const lastUpdated =
     metrics.updatedAt > 0 ? TIME_FORMATTER.format(metrics.updatedAt) : "—";
@@ -150,7 +151,9 @@ export function InstanceDetails({
           <div className="instance-info-item is-stack">
             <span className="instance-info-label">{hasCycle ? "周期流量" : "总流量"}</span>
             <div className="instance-info-traffic">
-              <span className="instance-info-value">{`↑ ${formatBytes(cycleUp)} · ↓ ${formatBytes(cycleDown)}`}</span>
+              <span className="instance-info-value">{hasCycle && !hasDirectionalCycle
+                ? `合计 ${formatBytes(trafficUsage.used)}（上行＋下行）`
+                : `↑ ${formatBytes(cycleUp)} · ↓ ${formatBytes(cycleDown)}`}</span>
               <div
                 className={`instance-progress-track${trafficUsage.unlimited ? " is-unlimited" : ""}`}
                 aria-hidden
@@ -165,9 +168,9 @@ export function InstanceDetails({
               <span className="instance-info-note">
                 {trafficUsage.unlimited
                   ? `${formatBytes(trafficUsage.used)} / ∞`
-                  : hasCycle ? `${formatBytes(trafficUsage.used)} / ${formatBytes(trafficUsage.limit)}` : `暂无周期数据 / ${formatBytes(trafficUsage.limit)}`}
+                  : hasCycle ? `${formatBytes(trafficUsage.used)} / ${formatBytes(trafficUsage.limit)}` : `${metrics.cycleReason || "暂无周期数据"} / ${formatBytes(trafficUsage.limit)}`}
               </span>
-              {metrics.cyclePartial && <span className="instance-info-note">周期快照未覆盖完整时段，实际用量可能更高。</span>}
+              {metrics.cyclePartial && <span className="instance-info-note">{metrics.cycleReason || "周期数据未覆盖完整时段，实际用量可能更高。"}</span>}
               {hasCycle && (
                 <span className="instance-info-note">
                   开机累计：↑ {formatBytes(metrics.trafficUp)} · ↓ {formatBytes(metrics.trafficDown)}

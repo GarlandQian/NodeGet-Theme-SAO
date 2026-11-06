@@ -41,6 +41,87 @@ beforeEach(async () => {
 afterEach(() => { api.closeNodeGetConnections(); vi.useRealTimers(); });
 
 describe("NodeGet public API", () => {
+  it("loads homepage traffic totals without querying unused rate histories", async () => {
+    const successful = state.call.getMockImplementation()!;
+    const start = Date.now() - 3_600_000;
+    const end = Date.now();
+    state.call.mockImplementation(async (url, method, params) => {
+      if (method !== "agent_query_traffic_total") return successful(url, method, params);
+      return {
+        uuid: "same", transmitted: 100, received: 200, possible_data_losses: [],
+        interfaces: [{ interface_name: "eth0", transmitted: 100, received: 200,
+          first_snapshot_time: start, last_snapshot_time: end }],
+      };
+    });
+    const nodes = await api.getNodes();
+    const data = await api.getTodayTrafficMetrics([nodes[0]!.uuid], start, end, { includeRates: false });
+    expect(data.series.map(item => item.metricKey)).toEqual(["traffic.up", "traffic.down"]);
+    expect(state.call.mock.calls.some(([, method]) => method === "agent_query_dynamic_summary")).toBe(false);
+  });
+
+  it("publishes each completed node while another source is still waiting", async () => {
+    const successful = state.call.getMockImplementation()!;
+    let release!: () => void;
+    const slow = new Promise<void>(resolve => { release = resolve; });
+    state.call.mockImplementation(async (url, method, params) => {
+      if (method !== "task_query") return successful(url, method, params);
+      if (url.includes("two.example")) { await slow; return []; }
+      const conditions = (params.task_data_query as { condition: Array<Record<string, unknown>> }).condition;
+      return conditions.some(condition => condition.type === "ping") ? [
+        { uuid: "same", cron_source: "Tokyo", task_id: 1, timestamp: Date.now() - 60_000, success: true, task_event_result: { ping: 12 }, task_event_type: { ping: "example.com" } },
+        { uuid: "same", cron_source: "Tokyo", task_id: 2, timestamp: Date.now() - 30_000, success: false, task_event_result: {}, task_event_type: { ping: "example.com" } },
+      ] : [];
+    });
+    const nodes = await api.getNodes();
+    const progress = vi.fn();
+    let finished = false;
+    const pending = api.getPingOverview(1, undefined, { entityIds: nodes.map(node => node.uuid), onProgress: progress })
+      .then(result => { finished = true; return result; });
+    await vi.waitFor(() => expect(progress).toHaveBeenCalledWith(expect.objectContaining({
+      stats: [expect.objectContaining({ total: 2, valid: 1, loss: 50 })],
+    }), [nodes[0]!.uuid]));
+    expect(finished).toBe(false);
+    release();
+    await pending;
+    expect(progress).toHaveBeenCalledTimes(2);
+  });
+
+  it("resolves a configured task on a cold start without scanning other nodes or loading duplicate statistics", async () => {
+    const { stableId } = await import("../nodeget/normalize");
+    const nodes = await api.getNodes();
+    const source = nodes[0]!.uuid.split("~")[0]!;
+    const taskId = stableId(`${source}\0ping\0cron:Tokyo`);
+    const successful = state.call.getMockImplementation()!;
+    state.call.mockImplementation(async (url, method, params) => {
+      if (method !== "task_query") return successful(url, method, params);
+      const conditions = (params.task_data_query as { condition: Array<Record<string, unknown>> }).condition;
+      return conditions.some(condition => condition.type === "ping") ? [
+        { uuid: "same", cron_source: "Tokyo", task_id: 1, timestamp: Date.now() - 60_000, success: true, task_event_result: { ping: 12 }, task_event_type: { ping: "example.com" } },
+      ] : [];
+    });
+    const response = await api.getPingOverview(1, taskId, { entityIds: [nodes[0]!.uuid] });
+    expect(response.tasks.map(task => task.id)).toEqual([taskId]);
+    expect(response.stats?.[0]?.latest).toBe(12);
+    const calls = state.call.mock.calls.filter(([, method]) => method === "task_query");
+    expect(calls).toHaveLength(2);
+    expect(calls.every(([url]) => url.includes("one.example"))).toBe(true);
+  });
+
+  it("does not repeat empty 24-hour discovery on every homepage refresh", async () => {
+    vi.useFakeTimers();
+    const nodes = await api.getNodes();
+    await api.getPingOverview(1, undefined, { entityIds: [nodes[0]!.uuid] });
+    vi.advanceTimersByTime(60_000);
+    await api.getPingOverview(1, undefined, { entityIds: [nodes[0]!.uuid] });
+    const discovery = state.call.mock.calls.filter(([, method, params]) => {
+      if (method !== "task_query") return false;
+      const conditions = (params.task_data_query as { condition: Array<Record<string, unknown>> }).condition;
+      const interval = conditions.find(condition => condition.timestamp_from_to)?.timestamp_from_to as number[];
+      return interval[1]! - interval[0]! > 3_600_000;
+    });
+    expect(discovery).toHaveLength(2);
+  });
+
   it("discovers nodes with the official public preset and separates sources", async () => {
     const nodes = await api.getNodes();
     expect(nodes).toHaveLength(2); expect(nodes[0]!.uuid).not.toBe(nodes[1]!.uuid);

@@ -90,10 +90,19 @@ ZIP 根目录直接包含 `index.html`、`assets/`、`nodeget-theme.json`、`nod
 - 支持正式版 v0.6.0 的流量接口与当前 v0.6.1 beta 拆分后的接口，通过能力识别适配；不维护 v0.5.x。
 - 费用、到期日、标签和分组来自 NodeGet 节点元数据，没有配置时显示缺失状态。
 - Ping/TCPing 直接读取 NodeGet 已有任务及执行记录。首页默认自动选择节点的可用任务，无需先在主题中绑定；也可在主题设置中指定任务。没有任务、没有样本或读取权限不足时分别提示，主题不创建任务、不生成模拟延迟或丢包。
+- Ping 按节点逐步显示完整区间统计，慢节点不会拖住其他节点；首页总览只读取今日流量合计，速率历史按需加载。
 - 历史周期流量依赖 NodeGet 的流量快照。按官方流程安装并运行 `traffic-snapshot-worker`；快照不足、数据缺口或权限不足时，主题会显示原因，不把它们当作零流量。
 - 主控连接失败、无权限或数据未配置时，其他主控和不受影响的功能继续工作；汇总不完整时会提示。
 
 官方资料：[主题开发](https://nodeget.com/dev/theme/)、[主题安装](https://nodeget.com/guide/theme/quick-install)、[流量统计](https://nodeget.com/guide/features/traffic)、[节点元数据约定](https://nodeget.com/api/kv/special)、[版本变更](https://github.com/NodeSeekDev/NodeGet/releases)。
+
+### 流控扩展
+
+兼容 [34892002/nodeget 的 extension-traffic](https://github.com/34892002/nodeget/blob/503e39f20138aac597c87ba3071668c829050cc4/extension-traffic/extension-dist.zip)。主题读取扩展配置的配额与 `metadata_traffic_used` 周期已用量，按上传和下载的合计展示；扩展中的 GB 配额按 GiB 换算。扩展只提供合计时，详情也显示合计。
+
+该 ZIP 只有配置界面。还需在 NodeGet 后台配置并运行扩展的 [worker-traffic-reset.js](https://github.com/34892002/nodeget/blob/503e39f20138aac597c87ba3071668c829050cc4/extension-traffic/worker-traffic-reset.js)，由 Worker 初始化周期起点并持续发布用量。脚本建议每小时运行；主题更新不会替代这一步。只有配额、没有周期用量时，主题显示“等待流量扩展初始化周期”。
+
+已核对的发布包对应提交 `503e39f`。其 Worker 的月周期为从初始化或重置时刻起算的固定 30 天；按量计费和永不重置显示为不限量。主题遵循扩展发布的数据，不在浏览器重置或补造流量。缺少起点的已发布用量会标记不完整，过期周期会提示等待 Worker 更新。今日流量及速率历史仍来自 NodeGet 原生记录，不能用周期累计量替代。
 
 ## 本地开发与打包
 
@@ -110,7 +119,7 @@ npm run build
 npm run package
 ```
 
-`npm run build` 完成类型检查、Vite 构建、配置与主题元信息生成。`npm run package` 生成仓库根目录的 `NodeGet-Theme-SAO-v1.3.6.zip`。版本以 `package.json` 为准；更新版本时同步根目录 manifest。
+`npm run build` 完成类型检查、Vite 构建、配置与主题元信息生成。`npm run package` 生成仓库根目录的 `NodeGet-Theme-SAO-v1.3.7.zip`。版本以 `package.json` 为准；更新版本时同步根目录 manifest。
 
 **分发 ZIP 始终使用空 `site_tokens` 模板**，即使本次构建设置了 `NODEGET_CONFIG`。实际站点配置只保留在 `dist/config.json` 中；直接发布 `dist/` 前应确认它是个人站点还是公开分发站。
 

@@ -1,5 +1,5 @@
 import type { PingRecord, PingTask, PingTaskStats } from "@/types/models";
-import { HistoryScheduler, queryCompleteWindow } from "./history";
+import { HistoryScheduler, queryCompleteWindow, type HistoryRequestOptions } from "./history";
 import { globalUuid, inferredInterval, number, row, rows, stableId, text, timestamp, type Row } from "./normalize";
 import { aborted, type RequestOptions, type RpcCaller } from "./rpc";
 
@@ -70,6 +70,7 @@ export function downsamplePing(records: PingRecord[], start: number, end: number
 export class PingReader {
   private readonly identities = new Map<number, Identity>();
   private readonly taskClients = new Map<number, Set<string>>();
+  private readonly discovery = new Map<string, { checkedAt: number; partial: boolean }>();
 
   constructor(private readonly source: string, private readonly rpc: RpcCaller, private readonly scheduler: HistoryScheduler) {}
 
@@ -83,7 +84,19 @@ export class PingReader {
 
   owns(taskId: number): boolean { return this.identities.has(taskId); }
 
-  async query(uuid: string, start: number, end: number, options: RequestOptions = {}, taskId?: number): Promise<PingData> {
+  /** 当前窗口没有记录时只发现身份；旧样本永远不计入首页当前区间。 */
+  async discover(uuid: string, end: number, options: RequestOptions = {}): Promise<boolean> {
+    aborted(options.signal);
+    const client = globalUuid(this.source, uuid);
+    if ([...this.taskClients.values()].some(clients => clients.has(client))) return false;
+    const cached = this.discovery.get(uuid);
+    if (cached && Date.now() - cached.checkedAt < 300_000) return cached.partial;
+    const data = await this.query(uuid, end - 86_400_000, end, { ...options, priority: "background" });
+    this.discovery.set(uuid, { checkedAt: Date.now(), partial: data.partial });
+    return data.partial;
+  }
+
+  async query(uuid: string, start: number, end: number, options: HistoryRequestOptions = {}, taskId?: number): Promise<PingData> {
     const identity = taskId === undefined ? undefined : this.identities.get(taskId);
     if (taskId !== undefined && !identity) return { records: [], tasks: [], stats: [], partial: false };
     const types: Array<Identity["type"]> = identity ? [identity.type] : ["ping", "tcp_ping"];
@@ -94,7 +107,7 @@ export class PingReader {
         aborted(options.signal);
         return rows(await this.scheduler.call(this.rpc, "task_query", {
           task_data_query: { condition: [...conditions, { timestamp_from_to: [from, to] }, { limit: 10_000 }] },
-        }, options));
+        }, { ...options, priority: options.priority ?? "interactive" }));
       });
       return this.parseRows(uuid, payload, type, start, end).filter(record => taskId === undefined || record.task_id === taskId);
     }));

@@ -1,5 +1,9 @@
 import { aborted, waitFor, type RequestOptions, type RpcCaller } from "./rpc";
 
+export interface HistoryRequestOptions extends RequestOptions {
+  priority?: "interactive" | "background";
+}
+
 interface Job {
   key: string;
   caller: RpcCaller;
@@ -10,6 +14,8 @@ interface Job {
   resolve: (value: unknown) => void;
   reject: (error: unknown) => void;
   consumers: number;
+  priority: "interactive" | "background";
+  started: boolean;
 }
 
 /** 所有主控共享历史查询预算；同一请求可共享，取消不影响其他订阅者。 */
@@ -20,10 +26,11 @@ export class HistoryScheduler {
   private readonly queue: Job[] = [];
   private nextId = 0;
   private active = 0;
+  private activeBackground = 0;
 
   constructor(private readonly concurrency = 4, private readonly ttl = 15_000) {}
 
-  async call<T = unknown>(caller: RpcCaller, method: string, params: Record<string, unknown>, options: RequestOptions = {}): Promise<T> {
+  async call<T = unknown>(caller: RpcCaller, method: string, params: Record<string, unknown>, options: HistoryRequestOptions = {}): Promise<T> {
     aborted(options.signal);
     let id = this.ids.get(caller);
     if (id === undefined) { id = ++this.nextId; this.ids.set(caller, id); }
@@ -36,10 +43,11 @@ export class HistoryScheduler {
       let resolve!: Job["resolve"];
       let reject!: Job["reject"];
       const promise = new Promise<unknown>((ok, fail) => { resolve = ok; reject = fail; });
-      job = { key, caller, method, params, controller: new AbortController(), promise, resolve, reject, consumers: 0 };
+      job = { key, caller, method, params, controller: new AbortController(), promise, resolve, reject, consumers: 0, priority: options.priority ?? "background", started: false };
       this.jobs.set(key, job);
       this.queue.push(job);
     }
+    if (!job.started && options.priority === "interactive") job.priority = "interactive";
     job.consumers++;
     this.drain();
     try {
@@ -63,9 +71,19 @@ export class HistoryScheduler {
 
   private drain() {
     while (this.active < this.concurrency && this.queue.length) {
-      const job = this.queue.shift()!;
-      if (this.jobs.get(job.key) !== job) continue;
+      for (let index = this.queue.length - 1; index >= 0; index--) {
+        const queued = this.queue[index]!;
+        if (this.jobs.get(queued.key) !== queued) this.queue.splice(index, 1);
+      }
+      const interactive = this.queue.findIndex(job => job.priority === "interactive");
+      // 为首页 Ping 留出一个位置，避免全天流量/历史查询先占满全部连接预算。
+      const backgroundLimit = Math.max(1, this.concurrency - 1);
+      if (interactive < 0 && this.activeBackground >= backgroundLimit) return;
+      const job = this.queue.splice(interactive < 0 ? 0 : interactive, 1)[0];
+      if (!job) return;
+      job.started = true;
       this.active++;
+      if (job.priority === "background") this.activeBackground++;
       void this.execute(job);
     }
   }
@@ -82,6 +100,7 @@ export class HistoryScheduler {
     finally {
       if (this.jobs.get(job.key) === job) this.jobs.delete(job.key);
       this.active--;
+      if (job.priority === "background") this.activeBackground--;
       this.drain();
     }
   }

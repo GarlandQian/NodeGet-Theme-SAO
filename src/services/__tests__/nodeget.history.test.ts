@@ -3,6 +3,34 @@ import { HistoryScheduler, IncompleteHistoryError, queryCompleteWindow } from ".
 import type { RpcCaller } from "../nodeget/rpc";
 
 describe("NodeGet history scheduling", () => {
+  it("reserves capacity for interactive Ping ahead of queued bulk history without exceeding the shared budget", async () => {
+    const releases: Array<() => void> = [];
+    const started: string[] = [];
+    let active = 0;
+    let peak = 0;
+    const caller = { call: vi.fn((method: string) => {
+      started.push(method);
+      peak = Math.max(peak, ++active);
+      return new Promise(resolve => releases.push(() => { active--; resolve([]); }));
+    }), close() {} } as RpcCaller;
+    const scheduler = new HistoryScheduler(4);
+    const history = Array.from({ length: 4 }, (_, n) => scheduler.call(caller, `history-${n}`, {}));
+    expect(started).toEqual(["history-0", "history-1", "history-2"]);
+    const ping = [0, 1].map(n => scheduler.call(caller, `ping-${n}`, {}, { priority: "interactive" }));
+    expect(started.at(-1)).toBe("ping-0");
+    releases[0]!();
+    await history[0];
+    expect(started.at(-1)).toBe("ping-1");
+    for (let index = 1; index < releases.length; index++) {
+      releases[index]!();
+      await Promise.resolve();
+    }
+    await Promise.all([...history, ...ping]);
+    expect(started).toContain("history-3");
+    expect(peak).toBe(4);
+    scheduler.close();
+  });
+
   it("shares identical reads while cancellation only removes one consumer", async () => {
     let resolve!: (value: unknown) => void;
     const call = vi.fn(() => new Promise(ok => { resolve = ok; }));

@@ -1,5 +1,5 @@
 import { HistoryScheduler } from "./history";
-import { number, row, rows, timestamp, type Row } from "./normalize";
+import { number, row, rows, text, timestamp, type Row } from "./normalize";
 import { NodeGetRpcError, type RequestOptions, type RpcCaller } from "./rpc";
 
 export interface TrafficTotal {
@@ -8,6 +8,56 @@ export interface TrafficTotal {
   first: number;
   last: number;
   partial: boolean;
+}
+
+export interface ExtensionTrafficPeriod {
+  /** 扩展只记录上下行合计，不虚构方向拆分。 */
+  used?: number;
+  start: number;
+  partial: boolean;
+  reason?: string;
+  canReadSnapshots: boolean;
+}
+
+const EXTENSION_PERIOD_MS: Readonly<Record<string, number>> = {
+  hourly: 3_600_000,
+  daily: 86_400_000,
+  weekly: 604_800_000,
+  // extension-traffic 的重置 Worker 使用固定 30 天，而非自然月或本地时区月初。
+  monthly: 2_592_000_000,
+};
+
+/** 34892002/nodeget extension-traffic 发布的周期用量；只读，不代替 Worker 重置。 */
+export function readExtensionTrafficPeriod(metadata: Row, now = Date.now()): ExtensionTrafficPeriod | undefined {
+  const mode = text(metadata.metadata_billing_mode).toLowerCase();
+  const period = text(metadata.metadata_traffic_period).toLowerCase();
+  if (!["quota", "payg"].includes(mode) || ![...Object.keys(EXTENSION_PERIOD_MS), "never"].includes(period)) return undefined;
+  if (mode === "payg" || period === "never" || !(number(metadata.metadata_traffic_limit) > 0)) {
+    return { start: 0, partial: false, canReadSnapshots: false };
+  }
+
+  const start = timestamp(metadata.metadata_traffic_period_start);
+  const duration = EXTENSION_PERIOD_MS[period]!;
+  if (start > now) return { start, partial: false, canReadSnapshots: false, reason: "流量扩展的周期起点尚未到达" };
+  if (start > 0 && now - start >= duration) {
+    return { start, partial: false, canReadSnapshots: false, reason: "流量周期已过期，等待重置 Worker 更新" };
+  }
+
+  const rawUsed = metadata.metadata_traffic_used;
+  const used = number(rawUsed);
+  if (rawUsed != null && rawUsed !== "" && (!Number.isSafeInteger(used) || used < 0)) {
+    return { start, partial: false, canReadSnapshots: false, reason: "流量扩展返回了无效的周期用量" };
+  }
+  if (Number.isSafeInteger(used) && used >= 0) {
+    return {
+      used, start, partial: start <= 0, canReadSnapshots: false,
+      ...(start <= 0 ? { reason: "显示扩展已发布用量，周期起点尚未确认" } : {}),
+    };
+  }
+  return {
+    start, partial: false, canReadSnapshots: start > 0,
+    reason: start > 0 ? "等待流量扩展发布周期用量" : "等待流量扩展初始化周期",
+  };
 }
 
 function count(value: unknown): number {

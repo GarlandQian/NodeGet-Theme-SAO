@@ -278,18 +278,20 @@ function getTodayTrafficQueryOptions(
   uuids: string[],
   now: number,
   mode: TodayTrafficQueryMode,
+  includeRates = true,
 ) {
   const stableUuids = [...new Set(uuids)].sort();
   const startMs = localDayStartMs(now);
   const uuidSignature = stableUuids.join(",");
 
   return queryOptions({
-    queryKey: ["traffic-stats", "today", startMs, mode, uuidSignature],
+    queryKey: ["traffic-stats", "today", startMs, mode, includeRates, uuidSignature],
     queryFn: async ({ signal }): Promise<TodayTrafficStatsResponse> => {
       const endMs = Date.now();
       const data = await getTodayTrafficMetrics(stableUuids, startMs, endMs, {
         signal,
         timeout: TRAFFIC_REQUEST_TIMEOUT_MS,
+        includeRates,
       });
       const hasPoints = (uuid: string, key: string) => data.series.some((item) =>
         item.client === uuid && item.metricKey === key && item.points.some((point) =>
@@ -328,8 +330,9 @@ export function useTodayTrafficStats(
   uuids: string[],
   now: number,
   mode: TodayTrafficQueryMode = "full",
+  includeRates = true,
 ) {
-  return useQuery(getTodayTrafficQueryOptions(uuids, now, mode));
+  return useQuery(getTodayTrafficQueryOptions(uuids, now, mode, includeRates));
 }
 
 export function preloadTodayTrafficStats(

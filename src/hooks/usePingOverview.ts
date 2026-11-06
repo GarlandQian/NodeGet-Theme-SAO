@@ -485,8 +485,11 @@ export async function buildPingOverviewMap(
     if (!current) return;
     const taskState = taskStates.get(taskId) ?? "pending";
     const displayState = taskState === "pending" ? (current.loadState ?? "ready") : taskState;
-    const nodeIssue = loadedByTask.get(taskId)?.overview.issues?.[uuid] ?? taskIssues.get(taskId);
-    const next = successfulTaskIds.has(taskId)
+    const loaded = loadedByTask.get(taskId);
+    const hasNodeResult = loaded?.entityIds.includes(uuid) ?? false;
+    const taskIssue = taskIssues.get(taskId);
+    const nodeIssue = loaded?.overview.issues?.[uuid] ?? (taskIssue?.status === "partial" || !hasNodeResult ? taskIssue : undefined);
+    const next = hasNodeResult
       ? {
           ...(itemsByTask.get(taskId)?.get(uuid) ?? assignedEmptyPing(uuid, "ready")),
           loadState: nodeIssue && nodeIssue.status !== "partial" ? "error" as const : "ready" as const,
@@ -511,8 +514,11 @@ export async function buildPingOverviewMap(
     const displayState = taskState === "pending" ? (current.loadState ?? "ready") : taskState;
     const currentName = !isFallbackTaskName(current.taskName) ? current.taskName : undefined;
     const resolvedName = taskNames.get(taskId) ?? currentName ?? `任务 #${taskId}`;
-    const nodeIssue = loadedByTask.get(taskId)?.overview.issues?.[uuid] ?? taskIssues.get(taskId);
-    const next = successfulTaskIds.has(taskId)
+    const loaded = loadedByTask.get(taskId);
+    const hasNodeResult = loaded?.entityIds.includes(uuid) ?? false;
+    const taskIssue = taskIssues.get(taskId);
+    const nodeIssue = loaded?.overview.issues?.[uuid] ?? (taskIssue?.status === "partial" || !hasNodeResult ? taskIssue : undefined);
+    const next = hasNodeResult
       ? {
           taskId,
           taskName: resolvedName,
@@ -560,9 +566,13 @@ export async function buildPingOverviewMap(
 
   const applyOverview = (loaded: LoadedPingOverviewTask) => {
     loadedByTask.set(loaded.taskId, loaded);
-    successfulTaskIds.add(loaded.taskId);
-    failedTaskIds.delete(loaded.taskId);
-    taskStates.set(loaded.taskId, "ready");
+    const requested = normalizedUuids.filter(uuid => requestedTaskIdsByClient.get(uuid)?.includes(loaded.taskId));
+    const complete = requested.every(uuid => loaded.entityIds.includes(uuid));
+    if (complete) {
+      successfulTaskIds.add(loaded.taskId);
+      failedTaskIds.delete(loaded.taskId);
+      taskStates.set(loaded.taskId, "ready");
+    }
     if (loaded.overview.quality === "partial" && !loaded.overview.issues) {
       taskIssues.set(loaded.taskId, {
         status: "partial",
@@ -600,12 +610,37 @@ export async function buildPingOverviewMap(
     updateTaskOutputs(taskId);
   };
 
+  const applyProgress = (loaded: LoadedPingOverviewTask) => {
+    if (signal?.aborted) return;
+    const previous = loadedByTask.get(loaded.taskId);
+    if (!previous) {
+      applyOverview(loaded);
+    } else {
+      const completed = new Set(loaded.entityIds);
+      const issues = { ...previous.overview.issues };
+      for (const uuid of completed) delete issues[uuid];
+      Object.assign(issues, loaded.overview.issues);
+      applyOverview({
+        ...loaded,
+        entityIds: [...new Set([...previous.entityIds, ...loaded.entityIds])],
+        overview: {
+          ...loaded.overview,
+          records: [...previous.overview.records.filter(record => !completed.has(record.client)), ...loaded.overview.records],
+          tasks: [...new Map([...previous.overview.tasks, ...loaded.overview.tasks].map(task => [task.id, task])).values()],
+          stats: [...(previous.overview.stats ?? []).filter(stat => !completed.has(stat.client)), ...(loaded.overview.stats ?? [])],
+          issues,
+        },
+      });
+    }
+    emitProgress();
+  };
+
   const rebuildLoadedItems = () => {
     for (const loaded of loadedByTask.values()) applyOverview(loaded);
   };
 
   const batchStatsLoader = selectedTaskIds.length > 0
-    ? loadStats ?? (loadOverview === getPingOverview ? getPingOverviewStats : null)
+    ? loadStats ?? null
     : null;
   const batchStatsRequest = batchStatsLoader
     ? withTimeoutSignal(
@@ -627,7 +662,7 @@ export async function buildPingOverviewMap(
     : Promise.resolve([] as PingTaskStats[]);
 
   const batchTasksLoader = selectedTaskIds.length > 0
-    ? loadTasks ?? (loadOverview === getPingOverview ? getPublicPingTasks : null)
+    ? loadTasks ?? null
     : null;
   const batchTasksRequest = batchTasksLoader
     ? withTimeoutSignal(
@@ -678,6 +713,7 @@ export async function buildPingOverviewMap(
                 signal: requestSignal,
                 entityIds,
                 includeStats: batchStatsLoader == null,
+                onProgress: (overview, completed) => applyProgress({ taskId, entityIds: completed, overview }),
               }),
             };
           },
@@ -699,51 +735,56 @@ export async function buildPingOverviewMap(
     }),
   );
 
+  const completedAutomaticUuids = new Set<string>();
+  const applyAutomatic = (overview: Awaited<ReturnType<typeof getPingOverview>>, entityIds: string[]) => {
+    if (signal?.aborted) return;
+    for (const uuid of entityIds) {
+      completedAutomaticUuids.add(uuid);
+      const sampledTaskIds = new Set(overview.records.filter(record => record.client === uuid).map(record => record.task_id));
+      // 每个节点的完整当前窗口独立返回；其他节点仍在查询时即可展示真实丢包。
+      const candidates = overview.tasks
+        .filter(task => task.clients.includes(uuid) || sampledTaskIds.has(task.id))
+        .sort((left, right) =>
+          Number(sampledTaskIds.has(right.id)) - Number(sampledTaskIds.has(left.id)) ||
+          Number(right.type === "icmp") - Number(left.type === "icmp") ||
+          left.name.localeCompare(right.name) || left.id - right.id,
+        );
+      const task = candidates[0];
+      const dataIssue = overview.issues?.[uuid] ?? (overview.quality === "partial" && !overview.issues
+        ? { status: "partial" as const, message: overview.message || "部分 Ping 数据无法读取，统计不完整" }
+        : undefined);
+      const failed = dataIssue && dataIssue.status !== "partial";
+      const item = task ? buildPingOverviewItems(task.id, overview.records, overview.stats, overview.intervalSeconds).get(uuid) : undefined;
+      const previousItem = singleItems.get(uuid);
+      singleItems.set(uuid, {
+        ...(item ?? (failed && previousItem ? previousItem : assignedEmptyPing(uuid, "ready"))),
+        isAssigned: Boolean(task || dataIssue),
+        loadState: failed ? "error" : "ready",
+        dataIssue,
+      });
+      if (task) {
+        if (failed) failedTaskIds.add(task.id);
+        else successfulTaskIds.add(task.id);
+        refreshIntervals.set(task.id, normalizeRefreshInterval(task.interval));
+      }
+      changedUuids.add(uuid);
+    }
+    emitProgress();
+  };
   const automaticRequest = automaticUuids.length > 0
     ? withTimeoutSignal(
         requestSignal => loadOverview(hours, undefined, {
           signal: requestSignal,
           entityIds: automaticUuids,
           includeStats: true,
+          onProgress: applyAutomatic,
         }),
         PING_REQUEST_TIMEOUT_MS,
         signal,
-      ).then(overview => {
-        for (const uuid of automaticUuids) {
-          const sampledTaskIds = new Set(overview.records.filter(record => record.client === uuid).map(record => record.task_id));
-          // 优先使用当前窗口里有样本的任务，再以 ICMP、名称、身份固定排序。
-          // 任务来自 NodeGet 返回的执行记录，主题不需要另外保存一份绑定才能显示。
-          const candidates = overview.tasks
-            .filter(task => task.clients.includes(uuid) || sampledTaskIds.has(task.id))
-            .sort((left, right) =>
-              Number(sampledTaskIds.has(right.id)) - Number(sampledTaskIds.has(left.id)) ||
-              Number(right.type === "icmp") - Number(left.type === "icmp") ||
-              left.name.localeCompare(right.name) || left.id - right.id,
-            );
-          const task = candidates[0];
-          const dataIssue = overview.issues?.[uuid] ?? (overview.quality === "partial" && !overview.issues
-            ? { status: "partial" as const, message: overview.message || "部分 Ping 数据无法读取，统计不完整" }
-            : undefined);
-          const failed = dataIssue && dataIssue.status !== "partial";
-          const item = task ? buildPingOverviewItems(task.id, overview.records, overview.stats, overview.intervalSeconds).get(uuid) : undefined;
-          const previousItem = hasPrevious ? previous?.singleItems.get(uuid) : undefined;
-          singleItems.set(uuid, {
-            ...(item ?? (failed && previousItem ? previousItem : assignedEmptyPing(uuid, "ready"))),
-            isAssigned: Boolean(task || dataIssue),
-            loadState: failed ? "error" : "ready",
-            dataIssue,
-          });
-          if (task) {
-            if (failed) failedTaskIds.add(task.id);
-            else successfulTaskIds.add(task.id);
-            refreshIntervals.set(task.id, normalizeRefreshInterval(task.interval));
-          }
-          changedUuids.add(uuid);
-        }
-        emitProgress();
-      }).catch(error => {
+      ).then(overview => applyAutomatic(overview, automaticUuids)).catch(error => {
         if (signal?.aborted) return;
         for (const uuid of automaticUuids) {
+          if (completedAutomaticUuids.has(uuid)) continue;
           singleItems.set(uuid, {
             ...(singleItems.get(uuid) ?? assignedEmptyPing(uuid)),
             isAssigned: true,
