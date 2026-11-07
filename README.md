@@ -143,6 +143,28 @@ npm run typecheck
 
 发布说明可写在 `.github/release-notes/v<version>.md`，否则使用默认安装说明。安装时下载 **Releases 附件中的 `NodeGet-Theme-SAO-v<version>.zip`**；Actions Artifact 的外层压缩包还包含预览图和校验和，不能直接当作主题安装。
 
+## 自动部署 Cloudflare Pages 分发站
+
+正式 Release 发布成功后，可以自动将该 Release 的 ZIP 解压部署到 Cloudflare Pages，再用固定的 Pages 地址从 NodeGet 后台远程导入或更新主题。部署复用已发布且通过 SHA256 校验的 ZIP，不会重新构建或带入本地 `.env`。这是 NodeGet [规范主题](https://nodeget.com/dev/theme/)支持的静态分发方式。
+
+在 GitHub 仓库 **Settings → Secrets and variables → Actions** 中一次性配置：
+
+| 类型 | 名称 | 内容 |
+| --- | --- | --- |
+| Secret | `CLOUDFLARE_API_TOKEN` | 仅对目标账户授予 **Account → Cloudflare Pages → Edit** 的 API Token |
+| Secret | `CLOUDFLARE_ACCOUNT_ID` | 目标 Cloudflare 账户 ID |
+| Variable | `CLOUDFLARE_PAGES_PROJECT` | 专用 Pages 项目名，例如 `nodeget-theme-sao` |
+
+API Token 按 [Cloudflare CI 文档](https://developers.cloudflare.com/pages/how-to/use-direct-upload-with-continuous-integration/)创建，并直接填入 GitHub Secret。首次运行会创建同名 Pages 项目，生产分支为 `main`；同名项目已存在时会复用，因此请填写用于该主题分发的专用项目名。Cloudflare 的实际 `pages.dev` 域名由 API 返回，不需要事先猜测或手填。
+
+- **已有 Release 首次上线**：在 Actions 中选择 **Deploy release to Cloudflare Pages → Run workflow**，分支选 `main`，`release_tag` 留空会部署最新正式版，也可明确填写当前最新正式版，例如 `v1.3.8`。
+- **后续自动更新**：按原流程发布正式 Release，发布成功后自动调用部署流程。预发布版本不更新这个稳定分发地址。
+- **在 NodeGet 导入**：成功后的 Actions Summary 会显示 **Import URL**。将该根地址填写到 NodeGet 的远程主题导入界面；导入后在 NodeGet 后台配置自己的主控授权。
+
+工作流会填入主题的 `dist_page`，保留空的 `config.json.site_tokens`，配置跨域响应头，并逐文件核对线上内容与 CORS。Cloudflare 消费的 `_headers` 不列入 NodeGet 下载清单。生产部署串行运行，仅允许最新正式版上线；部署失败后可单独重跑部署工作流，无需重新发布已有 Release。
+
+未配置 `CLOUDFLARE_PAGES_PROJECT` 时，原 GitHub Release 流程照常运行并跳过 Pages 部署。设置项目变量前，请先配置两个 Secret。
+
 ## 来源与许可证
 
 保留上游 [MIT License](./LICENSE) 及作者版权。原 SAO 主题由 **WAOR** 开发，本仓库由 **GarlandQian** 适配 NodeGet。

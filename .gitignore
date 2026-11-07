@@ -24,6 +24,7 @@ Thumbs.db
 .vite/
 coverage/
 *.tsbuildinfo
+__pycache__/
 
 # Local reference checkouts
 komari-main/

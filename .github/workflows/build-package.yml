@@ -117,3 +117,13 @@ jobs:
           RELEASE_ZIP: ${{ needs.build.outputs.zip }}
           RELEASE_PRERELEASE: ${{ needs.build.outputs.prerelease }}
         run: node scripts/publish-github-release.mjs
+
+  deploy_pages:
+    needs: [build, publish]
+    if: vars.CLOUDFLARE_PAGES_PROJECT != '' && needs.build.outputs.prerelease == 'false'
+    uses: ./.github/workflows/deploy-pages.yml
+    with:
+      release_tag: ${{ needs.build.outputs.tag }}
+    secrets:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

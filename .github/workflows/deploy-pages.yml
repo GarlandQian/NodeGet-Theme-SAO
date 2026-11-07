@@ -1,0 +1,113 @@
+name: Deploy release to Cloudflare Pages
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Latest stable release tag (leave empty to select it automatically)"
+        required: false
+        type: string
+  workflow_call:
+    inputs:
+      release_tag:
+        required: true
+        type: string
+    secrets:
+      CLOUDFLARE_ACCOUNT_ID:
+        required: true
+      CLOUDFLARE_API_TOKEN:
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloudflare-pages-${{ vars.CLOUDFLARE_PAGES_PROJECT || 'unconfigured' }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout deployment tooling from main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check distribution tooling
+        run: python3 -m unittest discover -s scripts -p 'test_cloudflare_pages.py'
+
+      - name: Select and download the latest stable release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_TAG: ${{ inputs.release_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          latest="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)"
+          if [[ -n "$REQUESTED_TAG" && "$REQUESTED_TAG" != "$latest" ]]; then
+            echo 'Only the latest stable release can update the distribution site.' >&2
+            exit 1
+          fi
+          [[ "$latest" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1
+          sha="$(git rev-parse "$latest^{commit}")"
+          git merge-base --is-ancestor "$sha" origin/main
+          zip="NodeGet-Theme-SAO-$latest.zip"
+          mkdir release-assets
+          gh release download "$latest" --repo "$GITHUB_REPOSITORY" --dir release-assets \
+            --pattern "$zip" --pattern SHA256SUMS --pattern preview.png
+          (cd release-assets && sha256sum --check SHA256SUMS)
+          python3 scripts/verify-release-package.py "release-assets/$zip" "${latest#v}"
+          echo "tag=$latest" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "zip=$zip" >> "$GITHUB_OUTPUT"
+
+      - name: Create or locate the Pages project
+        id: project
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_PAGES_PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT }}
+        run: python3 scripts/cloudflare-pages.py project
+
+      - name: Prepare the public distribution files
+        env:
+          RELEASE_ZIP: ${{ steps.release.outputs.zip }}
+          DISTRIBUTION_URL: ${{ steps.project.outputs.url }}
+        run: python3 scripts/cloudflare-pages.py prepare "release-assets/$RELEASE_ZIP" pages-dist "$DISTRIBUTION_URL"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "24"
+          package-manager-cache: false
+
+      - name: Recheck that the release has not been superseded
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: test "$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)" = "$RELEASE_TAG"
+
+      - name: Deploy the verified release
+        uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0 # v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: "4.158.0"
+          command: pages deploy pages-dist --project-name=${{ vars.CLOUDFLARE_PAGES_PROJECT }} --branch=main --commit-hash=${{ steps.release.outputs.sha }}
+
+      - name: Verify files and cross-origin import
+        env:
+          DISTRIBUTION_URL: ${{ steps.project.outputs.url }}
+        run: python3 scripts/cloudflare-pages.py verify pages-dist "$DISTRIBUTION_URL"
+
+      - name: Write the NodeGet import URL
+        env:
+          DISTRIBUTION_URL: ${{ steps.project.outputs.url }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          printf '### NodeGet theme distribution\n\nRelease: `%s`\n\nImport URL: %s\n' "$RELEASE_TAG" "$DISTRIBUTION_URL" >> "$GITHUB_STEP_SUMMARY"
