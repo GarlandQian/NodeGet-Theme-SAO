@@ -75,12 +75,17 @@ export class NodeGetSource {
       }
       const namespace_key = this.uuids.flatMap(uuid => [...METADATA_KEYS, ...(this.costsVisible ? COST_KEYS : [])]
         .map(key => ({ namespace: uuid, key })));
-      const [staticResult, metadataResult, dynamicResult] = await Promise.allSettled([
+      const [staticResult, metadataResult, dynamicResult, expiryResult] = await Promise.allSettled([
         this.rpc.call("agent_static_data_multi_last_query", { uuids: this.uuids, fields: ["cpu", "system"] }),
         this.rpc.call("kv_get_multi_value", { namespace_key }),
         this.loadDynamics(),
+        // KV 批次里任一字段无权限会整批失败，到期读取不能影响监控元数据。
+        this.rpc.call("kv_get_multi_value", {
+          namespace_key: this.uuids.map(namespace => ({ namespace, key: "metadata_expire_time" })),
+        }).then(metadataByUuid),
       ]);
       const statics = staticResult.status === "fulfilled" ? new Map(rows(staticResult.value).map(item => [text(item.uuid), item])) : new Map<string, Row>();
+      const expiryMetadata = expiryResult.status === "fulfilled" ? expiryResult.value : new Map<string, Row>();
       if (metadataResult.status === "fulfilled") {
         const data = metadataByUuid(metadataResult.value);
         this.metadata.clear();
@@ -90,7 +95,10 @@ export class NodeGetSource {
       this.metadataStatus = statusOf(metadataResult);
       const oldNodes = new Map(this.nodes.map(node => [text(node.native_uuid), node]));
       this.nodes = this.uuids.map(uuid => {
-        const node = nodeFromData(this.id, this.name, uuid, this.metadata.get(uuid) ?? {}, statics.get(uuid) ?? {}, this.dynamics.get(uuid) ?? {}, {
+        const node = nodeFromData(this.id, this.name, uuid, {
+          ...this.metadata.get(uuid),
+          metadata_expire_time: expiryMetadata.get(uuid)?.metadata_expire_time,
+        }, statics.get(uuid) ?? {}, this.dynamics.get(uuid) ?? {}, {
           metadata: statusOf(metadataResult), static: statusOf(staticResult), costs: this.costsVisible,
         });
         if (staticResult.status === "rejected") {

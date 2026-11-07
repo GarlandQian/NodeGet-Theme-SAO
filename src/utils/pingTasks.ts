@@ -88,6 +88,32 @@ export function normalizeHomepagePingTaskBindings(
   return normalized;
 }
 
+/** 单线模式的勾选和全选共用：将指定节点移到此线路，保留其他节点的绑定。 */
+export function assignHomepagePingTaskClients(
+  bindings: HomepagePingTaskBindings,
+  taskId: number,
+  clientUuids: readonly string[],
+  checked = true,
+): HomepagePingTaskBindings {
+  const next = normalizeHomepagePingTaskBindings(bindings);
+  const selected = new Set(clientUuids.map((uuid) => uuid.trim()).filter(Boolean));
+  if (parseTaskId(String(taskId)) == null || selected.size === 0) return next;
+
+  for (const [currentTaskId, clients] of Object.entries(next)) {
+    const remaining = clients.filter((uuid) => !selected.has(uuid));
+    if (remaining.length > 0) next[currentTaskId] = remaining;
+    else delete next[currentTaskId];
+  }
+
+  if (checked) {
+    const taskKey = String(taskId);
+    next[taskKey] = [...(next[taskKey] ?? []), ...selected].sort((left, right) =>
+      left.localeCompare(right),
+    );
+  }
+  return next;
+}
+
 export function invertHomepagePingTaskBindings(
   bindings: HomepagePingTaskBindings,
 ): Map<string, number> {

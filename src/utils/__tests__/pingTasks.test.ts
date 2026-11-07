@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   assignHomepageMultiPingTask,
+  assignHomepagePingTaskClients,
   HOMEPAGE_MULTI_PING_MIN_COUNT,
   isHomepageMultiPingConfigured,
   normalizeHomepageMultiPingTaskIds,
@@ -12,6 +13,39 @@ import {
 } from "@/utils/pingTasks";
 
 describe("homepage ping task bindings", () => {
+  it("moves all selected nodes between single lines without clearing the previous line first", () => {
+    const nodes = ["node-a", "node-b", "node-c"];
+    const first = assignHomepagePingTaskClients({}, 1, nodes);
+    const second = assignHomepagePingTaskClients(first, 2, nodes);
+    const third = assignHomepagePingTaskClients(second, 3, nodes);
+    expect(first).toEqual({ "1": nodes });
+    expect(second).toEqual({ "2": nodes });
+    expect(third).toEqual({ "3": nodes });
+    expect(assignHomepagePingTaskClients(third, 1, nodes)).toEqual(first);
+  });
+
+  it("moves only search results and retains existing selections outside that result", () => {
+    const bindings = { "1": ["node-a", "node-b"], "2": ["node-c"], "3": ["node-d"] };
+    expect(assignHomepagePingTaskClients(bindings, 2, ["node-b", "node-b"])).toEqual({
+      "1": ["node-a"], "2": ["node-b", "node-c"], "3": ["node-d"],
+    });
+    expect(bindings).toEqual({ "1": ["node-a", "node-b"], "2": ["node-c"], "3": ["node-d"] });
+    expect(assignHomepagePingTaskClients(bindings, 2, [])).toEqual(bindings);
+  });
+
+  it("uses the same exclusive assignment for individual selection and deselection", () => {
+    const moved = assignHomepagePingTaskClients({ "1": ["node-a", "node-b"] }, 2, ["node-a"]);
+    expect(moved).toEqual({ "1": ["node-b"], "2": ["node-a"] });
+    expect(assignHomepagePingTaskClients(moved, 2, ["node-a"], false)).toEqual({ "1": ["node-b"] });
+  });
+
+  it("keeps nodes with the same native UUID on different controllers separate", () => {
+    const bindings = { "1": ["primary~node-a", "backup~node-a"] };
+    expect(assignHomepagePingTaskClients(bindings, 2, ["primary~node-a"])).toEqual({
+      "1": ["backup~node-a"], "2": ["primary~node-a"],
+    });
+  });
+
   it("accepts only positive decimal safe integers", () => {
     expect(
       normalizeHomepagePingTaskBindings({

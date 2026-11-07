@@ -101,6 +101,7 @@ import {
 } from "@/utils/homeNodes";
 import {
   assignHomepageMultiPingTask,
+  assignHomepagePingTaskClients,
   HOMEPAGE_MULTI_PING_MIN_COUNT,
   isHomepageMultiPingConfigured,
   normalizeHomepageMultiPingTaskIds,
@@ -537,72 +538,6 @@ function pruneBindings(bindings: HomepagePingTaskBindings) {
   return pruned;
 }
 
-function applyClientAssignment(
-  bindings: HomepagePingTaskBindings,
-  taskId: number,
-  clientUuid: string,
-  checked: boolean,
-) {
-  const taskKey = String(taskId);
-  const next = pruneBindings(bindings);
-
-  for (const [currentTaskId, clients] of Object.entries(next)) {
-    const filtered = clients.filter((uuid) => uuid !== clientUuid);
-    if (filtered.length > 0) {
-      next[currentTaskId] = filtered;
-    } else {
-      delete next[currentTaskId];
-    }
-  }
-
-  if (checked) {
-    const selected = next[taskKey] ?? [];
-    next[taskKey] = Array.from(new Set([...selected, clientUuid])).sort((left, right) =>
-      left.localeCompare(right),
-    );
-  }
-
-  return next;
-}
-
-// 反查:client uuid → 所属 task id(字符串 key)。UI 保证每个 client 最多归属一个
-// task,所以简单的后写覆盖 map 就是精确的。下面的「全选可用」reducer 和每次渲染的
-// 可选节点过滤共用它,把「某 client 归属哪个 task」的推导收在一处。
-function invertBindings(bindings: HomepagePingTaskBindings): Map<string, string> {
-  const assignedTaskByClient = new Map<string, string>();
-  for (const [taskId, clients] of Object.entries(bindings)) {
-    for (const clientUuid of clients) {
-      assignedTaskByClient.set(clientUuid, taskId);
-    }
-  }
-  return assignedTaskByClient;
-}
-
-function applyAvailableClientAssignments(
-  bindings: HomepagePingTaskBindings,
-  taskId: number,
-  clientUuids: string[],
-) {
-  const taskKey = String(taskId);
-  const next = pruneBindings(bindings);
-  const assignedTaskByClient = invertBindings(next);
-  const selected = new Set(next[taskKey] ?? []);
-
-  for (const clientUuid of clientUuids) {
-    const assignedTaskId = assignedTaskByClient.get(clientUuid);
-    if (assignedTaskId && assignedTaskId !== taskKey) continue;
-    selected.add(clientUuid);
-  }
-
-  if (selected.size > 0) {
-    next[taskKey] = [...selected].sort((left, right) => left.localeCompare(right));
-  } else {
-    delete next[taskKey];
-  }
-
-  return next;
-}
-
 // 本页托管设置的键清单唯一来源:草稿类型(ThemeDraft)、seed(draftFromSettings)与内容签名
 // 都从它派生。新增一项设置只需在这里加一行,再到 JSX 里接 patch()。
 // 刻意不标注返回类型:让推断给出全字段必填的具体类型,ThemeDraft 才能安全地 Omit/扩展。
@@ -803,7 +738,6 @@ const TaskBindingSection = memo(function TaskBindingSection({
   expanded,
   clientsById,
   visibleClients,
-  assignedTaskByClientUuid,
   nodeSearch,
   onNodeSearch,
   onToggleExpand,
@@ -814,7 +748,6 @@ const TaskBindingSection = memo(function TaskBindingSection({
   expanded: boolean;
   clientsById: Map<string, NodeInfo>;
   visibleClients: NodeInfo[];
-  assignedTaskByClientUuid: Map<string, string>;
   nodeSearch: string;
   onNodeSearch: (value: string) => void;
   onToggleExpand: (taskId: number) => void;
@@ -823,16 +756,9 @@ const TaskBindingSection = memo(function TaskBindingSection({
   ) => void;
 }) {
   const assignedSummary = summarizeNodes(assigned, clientsById);
-  // 过滤只有展开的任务需要;收起的卡片跳过,搜索输入不再对每个任务做 O(clients) 扫描。
-  const selectableVisibleClients = expanded
-    ? visibleClients.filter((client) => {
-        const assignedTaskId = assignedTaskByClientUuid.get(client.uuid);
-        return !assignedTaskId || assignedTaskId === String(task.id);
-      })
-    : EMPTY_NODES;
-  const allVisibleSelectableAssigned =
-    selectableVisibleClients.length > 0 &&
-    selectableVisibleClients.every((client) => assigned.includes(client.uuid));
+  const allVisibleClientsAssigned =
+    visibleClients.length > 0 &&
+    visibleClients.every((client) => assigned.includes(client.uuid));
   return (
     <section className="surface-inset px-4 py-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -867,19 +793,20 @@ const TaskBindingSection = memo(function TaskBindingSection({
           {expanded && (
             <button
               type="button"
-              disabled={selectableVisibleClients.length === 0 || allVisibleSelectableAssigned}
+              disabled={visibleClients.length === 0 || allVisibleClientsAssigned}
+              title="将当前显示的节点切换到此线路"
               onClick={() => {
                 onPatchBindings((prev) =>
-                  applyAvailableClientAssignments(
+                  assignHomepagePingTaskClients(
                     prev,
                     task.id,
-                    selectableVisibleClients.map((client) => client.uuid),
+                    visibleClients.map((client) => client.uuid),
                   ),
                 );
               }}
               className="theme-manage-button is-compact"
             >
-              {allVisibleSelectableAssigned ? "已全选可用" : "全选可用"}
+              {allVisibleClientsAssigned ? "已全选节点" : "全选节点"}
             </button>
           )}
           {assigned.length > 0 && (
@@ -941,7 +868,7 @@ const TaskBindingSection = memo(function TaskBindingSection({
                     onChange={(event) => {
                       const nextChecked = event.target.checked;
                       onPatchBindings((prev) =>
-                        applyClientAssignment(prev, task.id, client.uuid, nextChecked),
+                        assignHomepagePingTaskClients(prev, task.id, [client.uuid], nextChecked),
                       );
                     }}
                     className="mt-1 h-4 w-4 shrink-0 accent-(--accent-500)"
@@ -1878,14 +1805,6 @@ function draftToThemeSettings(targetDraft: ThemeDraft): ThemeSettings {
     seedDrafts(sourceThemeSettings);
   }, [config, isDirty, sourceSignature, sourceThemeSettings, seedDrafts]);
 
-
-  // 每个 client 归属哪个 task 的反查,只在绑定草稿变化时重建。与「全选可用」reducer
-  // 共用 invertBindings() 避免推导漂移,并把可选节点过滤保持在 O(tasks × clients),
-  // 而不是每个 client 都重扫一遍 bindings。
-  const assignedTaskByClientUuid = useMemo(
-    () => invertBindings(draft.homepagePingBindings),
-    [draft.homepagePingBindings],
-  );
 
   const handleSave = async (overrideDraft?: Partial<ThemeDraft>) => {
     if (
@@ -3285,7 +3204,6 @@ function draftToThemeSettings(targetDraft: ThemeDraft): ThemeSettings {
                               expanded={expanded}
                               clientsById={clientsById}
                               visibleClients={expanded ? visibleClients : EMPTY_NODES}
-                              assignedTaskByClientUuid={assignedTaskByClientUuid}
                               nodeSearch={expanded ? nodeSearch : ""}
                               onNodeSearch={setNodeSearch}
                               onToggleExpand={toggleTaskExpanded}

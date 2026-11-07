@@ -13,7 +13,7 @@ export const METADATA_KEYS = [
   "metadata_traffic_limit", "metadata_traffic_limit_type", "metadata_billing_mode", "metadata_traffic_period",
   "metadata_traffic_period_start", "metadata_traffic_used",
 ];
-export const COST_KEYS = ["metadata_price", "metadata_price_unit", "metadata_price_cycle", "metadata_expire_time"];
+export const COST_KEYS = ["metadata_price", "metadata_price_unit", "metadata_price_cycle"];
 
 export function row(value: unknown): Row {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Row : {};
@@ -87,7 +87,8 @@ export function nodeFromData(
   const extension = ["quota", "payg"].includes(billingMode) && ["hourly", "daily", "weekly", "monthly", "never"].includes(period);
   const tags = decoded(metadata.metadata_tags);
   const price = statuses.costs ? number(metadata.metadata_price) : Number.NaN;
-  const expires = statuses.costs ? timestamp(metadata.metadata_expire_time) : 0;
+  // 到期日期独立于金额公开开关；字段是否可读仍由 NodeGet Token 权限决定。
+  const expires = new Date(timestamp(metadata.metadata_expire_time));
   const rawLimit = Math.max(0, number(metadata.metadata_traffic_limit, 0));
   const trafficLimit = extension ? billingMode === "payg" || period === "never" ? 0 : rawLimit * 1024 ** 3 : rawLimit;
   return NodeInfoSchema.parse({
@@ -107,7 +108,7 @@ export function nodeFromData(
     price: Number.isFinite(price) ? price : 0, price_configured: Number.isFinite(price),
     currency: statuses.costs ? text(metadata.metadata_price_unit) : "",
     billing_cycle: statuses.costs ? text(metadata.metadata_price_cycle) : "",
-    expired_at: expires > 0 ? new Date(expires).toISOString() : "",
+    expired_at: expires.getTime() > 0 ? expires.toISOString() : "",
     traffic_limit: trafficLimit, traffic_limit_type: extension ? "sum" : text(metadata.metadata_traffic_limit_type, "sum"),
     ...(extension ? { traffic_billing_mode: billingMode, traffic_period: period } : {}),
     metadata_status: statuses.metadata, static_status: statuses.static,

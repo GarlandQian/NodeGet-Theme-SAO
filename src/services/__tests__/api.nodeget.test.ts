@@ -134,6 +134,37 @@ describe("NodeGet public API", () => {
     const metadataCalls = state.call.mock.calls.filter(([, method]) => method === "kv_get_multi_value");
     expect(JSON.stringify(metadataCalls)).not.toContain("metadata_price");
   });
+  it("reads expiry independently while the site keeps prices private", async () => {
+    const successful = state.call.getMockImplementation()!;
+    const expires = 1_900_000_000_000;
+    state.config.user_preferences = { theme_settings: { showPriceForGuests: false } };
+    state.call.mockImplementation(async (url, method, params) => {
+      if (method !== "kv_get_multi_value") return successful(url, method, params);
+      const pairs = params.namespace_key as Array<{ namespace: string; key: string }>;
+      const expiryPairs = pairs.filter(pair => pair.key === "metadata_expire_time");
+      if (expiryPairs.length) return expiryPairs.map(pair => ({ ...pair, value: expires }));
+      return successful(url, method, params);
+    });
+    const nodes = await api.getNodes();
+    expect(nodes).toHaveLength(2);
+    expect(nodes.every(node => node.expired_at === new Date(expires).toISOString())).toBe(true);
+    expect(nodes.every(node => node.price_configured === false && node.currency === "" && node.billing_cycle === "")).toBe(true);
+    const metadataCalls = state.call.mock.calls.filter(([, method]) => method === "kv_get_multi_value");
+    expect(JSON.stringify(metadataCalls)).toContain("metadata_expire_time");
+    expect(JSON.stringify(metadataCalls)).not.toContain("metadata_price");
+  });
+  it("keeps monitoring metadata when the token cannot read expiry", async () => {
+    const successful = state.call.getMockImplementation()!;
+    state.call.mockImplementation(async (url, method, params) => {
+      if (method === "kv_get_multi_value" && (params.namespace_key as Array<{ key: string }>)
+        .some(pair => pair.key === "metadata_expire_time")) throw new NodeGetRpcError(102, method);
+      return successful(url, method, params);
+    });
+    const nodes = await api.getNodes();
+    expect(nodes).toHaveLength(2);
+    expect(nodes.every(node => node.name === "Shared name" && node.metadata_status === "ready")).toBe(true);
+    expect(nodes.every(node => node.expired_at === "")).toBe(true);
+  });
   it("discovers native Ping without bindings and isolates a source without task permission", async () => {
     const successful = state.call.getMockImplementation()!;
     state.call.mockImplementation((url, method, params) => {

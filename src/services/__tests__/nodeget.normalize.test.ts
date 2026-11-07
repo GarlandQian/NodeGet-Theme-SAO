@@ -17,6 +17,20 @@ describe("NodeGet presentation conversion", () => {
     expect(node.traffic_limit).toBe(2 * 1024 ** 3); expect(node.price_configured).toBe(false);
     expect(node.source_name).toBe("One");
   });
+  it("keeps expiry visible when amounts are hidden without exposing financial metadata", () => {
+    const expires = 1_900_000_000_000;
+    const node = nodeFromData("s1", "One", "same", {
+      metadata_expire_time: String(expires), metadata_price: 99,
+      metadata_price_unit: "USD", metadata_price_cycle: 30,
+    }, {}, {}, { costs: false, metadata: "ready", static: "ready" });
+    expect(node.expired_at).toBe(new Date(expires).toISOString());
+    expect(node).toMatchObject({ price: 0, price_configured: false, currency: "", billing_cycle: "" });
+    for (const value of [undefined, null, "", "not-a-date", 0, -1, 1e20]) {
+      expect(nodeFromData("s1", "One", "same", { metadata_expire_time: value }, {}, {}, {
+        costs: false, metadata: "ready", static: "ready",
+      }).expired_at).toBe("");
+    }
+  });
   it("computes interval deltas before dropping the predecessor and never fabricates resets", () => {
     const base = 1_800_000_000_000;
     const data = withTrafficDeltas("s~n", [
