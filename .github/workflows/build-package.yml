@@ -3,26 +3,35 @@ name: Release NodeGet theme
 on:
   workflow_dispatch:
   push:
+    branches:
+      - main
     tags:
       - "v*"
 
 permissions:
   contents: read
 
+# Keep version selection, publication and deployment in the same serial pipeline.
+concurrency:
+  group: nodeget-theme-release
+  cancel-in-progress: false
+
 jobs:
-  build:
+  build_publish:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
+    permissions:
+      contents: write
     outputs:
       tag: ${{ steps.metadata.outputs.tag }}
-      sha: ${{ steps.metadata.outputs.sha }}
-      zip: ${{ steps.metadata.outputs.zip }}
       prerelease: ${{ steps.metadata.outputs.prerelease }}
+      published: ${{ steps.publish.outputs.published }}
 
     steps:
-      - name: Checkout selected commit
+      - name: Checkout selected commit and release history
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Setup Node.js
@@ -31,23 +40,37 @@ jobs:
           node-version: "24"
           cache: npm
 
+      - name: Prepare the automatic release version
+        id: prepare
+        run: node scripts/auto-release.mjs
+
       - name: Validate release version
+        if: steps.prepare.outputs.skip != 'true'
         id: metadata
         run: node scripts/release-metadata.mjs >> "$GITHUB_OUTPUT"
 
+      - name: Check automatic release logic
+        if: steps.prepare.outputs.skip != 'true'
+        run: node --test scripts/test-auto-release.mjs
+
       - name: Install dependencies
+        if: steps.prepare.outputs.skip != 'true'
         run: npm ci
 
       - name: Lint
+        if: steps.prepare.outputs.skip != 'true'
         run: npm run lint
 
       - name: Test
+        if: steps.prepare.outputs.skip != 'true'
         run: npm test
 
       - name: Build distribution package
+        if: steps.prepare.outputs.skip != 'true'
         run: npm run package
 
       - name: Verify package and prepare release assets
+        if: steps.prepare.outputs.skip != 'true'
         env:
           RELEASE_VERSION: ${{ steps.metadata.outputs.version }}
           RELEASE_TAG: ${{ steps.metadata.outputs.tag }}
@@ -68,62 +91,35 @@ jobs:
           fi
 
       - name: Upload verified release assets
+        if: steps.prepare.outputs.skip != 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: nodeget-theme-${{ steps.metadata.outputs.tag }}
           path: release-assets/
           if-no-files-found: error
+          overwrite: true
           compression-level: 0
           retention-days: 14
 
-  publish:
-    needs: build
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: write
-    concurrency:
-      group: nodeget-release-${{ needs.build.outputs.tag }}
-      cancel-in-progress: false
-
-    steps:
-      - name: Checkout release tooling
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          ref: ${{ needs.build.outputs.sha }}
-          persist-credentials: false
-
-      - name: Setup Node.js
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
-        with:
-          node-version: "24"
-          package-manager-cache: false
-
-      - name: Download verified release assets
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
-        with:
-          name: nodeget-theme-${{ needs.build.outputs.tag }}
-          path: release-assets/
-
-      - name: Verify transferred assets
-        working-directory: release-assets
-        run: sha256sum --check SHA256SUMS
-
-      - name: Publish a new GitHub Release
+      - name: Publish the verified version and GitHub Release
+        if: steps.prepare.outputs.skip != 'true'
+        id: publish
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ needs.build.outputs.tag }}
-          RELEASE_SHA: ${{ needs.build.outputs.sha }}
-          RELEASE_ZIP: ${{ needs.build.outputs.zip }}
-          RELEASE_PRERELEASE: ${{ needs.build.outputs.prerelease }}
+          RELEASE_TAG: ${{ steps.metadata.outputs.tag }}
+          RELEASE_SHA: ${{ steps.metadata.outputs.sha }}
+          RELEASE_ZIP: ${{ steps.metadata.outputs.zip }}
+          RELEASE_PRERELEASE: ${{ steps.metadata.outputs.prerelease }}
+          RELEASE_AUTOMATIC: ${{ steps.prepare.outputs.automatic }}
+          RELEASE_SOURCE_SHA: ${{ steps.prepare.outputs.source_sha }}
         run: node scripts/publish-github-release.mjs
 
   deploy_pages:
-    needs: [build, publish]
-    if: vars.CLOUDFLARE_PAGES_PROJECT != '' && needs.build.outputs.prerelease == 'false'
+    needs: build_publish
+    if: needs.build_publish.outputs.published == 'true' && vars.CLOUDFLARE_PAGES_PROJECT != '' && needs.build_publish.outputs.prerelease == 'false'
     uses: ./.github/workflows/deploy-pages.yml
     with:
-      release_tag: ${{ needs.build.outputs.tag }}
+      release_tag: ${{ needs.build_publish.outputs.tag }}
     secrets:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

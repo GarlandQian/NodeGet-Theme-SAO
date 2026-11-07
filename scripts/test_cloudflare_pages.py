@@ -9,7 +9,7 @@ import stat
 import tempfile
 import unittest
 from unittest.mock import patch
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 import zipfile
 
 
@@ -99,17 +99,38 @@ class PagesDistributionTests(unittest.TestCase):
         self.make_zip()
         self.prepare()
 
-        def response(request, timeout):
+        def response(request, timeout, corrupt=False, cors="*"):
             name = request.full_url.split("?", 1)[0][len(SITE) + 1:]
             self.assertEqual(request.headers["Origin"], "https://dash.nodeget.com")
-            return Response((self.output / name).read_bytes())
+            self.assertEqual(request.headers["User-agent"], "NodeGet-Theme-SAO-Release-Verifier/1.0")
+            return Response(b"wrong content" if corrupt else (self.output / name).read_bytes(), cors)
 
         with patch.object(pages, "urlopen", side_effect=response), redirect_stdout(io.StringIO()):
             pages.verify(self.output, SITE)
-        for body, cors in [(b"wrong content", "*"), (b"<html>SAO</html>", None)]:
-            with patch.object(pages, "urlopen", side_effect=lambda *a, **k: Response(body, cors)), \
-                 patch.object(pages.time, "sleep"), self.assertRaises(ValueError):
+        for corrupt, cors, reason in [(True, "*", "SHA256 mismatch"),
+                                      (False, None, "Access-Control-Allow-Origin must be"),
+                                      (False, "https://other.example", "Access-Control-Allow-Origin must be")]:
+            with self.subTest(reason=reason, cors=cors), \
+                 patch.object(pages, "urlopen", side_effect=lambda *a, **k: response(*a, **k, corrupt=corrupt, cors=cors)), \
+                 patch.object(pages.time, "sleep"), self.assertRaisesRegex(ValueError, reason):
                 pages.verify(self.output, SITE)
+
+    def test_online_request_failures_report_safe_diagnostics(self):
+        self.output.mkdir()
+        (self.output / "LICENSE").write_text("license")
+        (self.output / pages.FILE_LIST).write_text(json.dumps(["LICENSE"]))
+        cases = [
+            (HTTPError(SITE, 403, "private-response-detail", None, None), "HTTP 403"),
+            (TimeoutError("private-response-detail"), "request timed out"),
+            (URLError(TimeoutError("private-response-detail")), "request timed out"),
+            (URLError("private-response-detail"), "network request failed"),
+        ]
+        for error, reason in cases:
+            with self.subTest(reason=reason), patch.object(pages, "urlopen", side_effect=error), \
+                 patch.object(pages.time, "sleep"), self.assertRaises(ValueError) as raised:
+                pages.verify(self.output, SITE)
+            self.assertEqual(str(raised.exception),
+                             f"Content or cross-origin verification failed: LICENSE ({reason})")
 
 
 class PagesProjectTests(unittest.TestCase):

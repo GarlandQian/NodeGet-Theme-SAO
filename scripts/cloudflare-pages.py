@@ -25,6 +25,7 @@ HEADERS = """/*
 """
 CONTROL_FILES = {"_headers", "_redirects", "_routes.json", ".assetsignore"}
 FILE_LIST = "nodeget-theme-files.json"
+VERIFIER_USER_AGENT = "NodeGet-Theme-SAO-Release-Verifier/1.0"
 
 
 def check(condition, message):
@@ -131,20 +132,33 @@ def verify(directory, url):
         expected = hashlib.sha256((root / name).read_bytes()).digest()
         # Cache-busting checks the newly deployed content, including immutable assets.
         target = f"{url}/{quote(name, safe='/')}?verify={expected.hex()[:16]}"
+        failure = "request failed"
         for attempt in range(3):
             try:
+                # Pages can reject urllib's default UA; identify the application.
                 request = Request(target, headers={"Origin": "https://dash.nodeget.com",
-                                                   "Cache-Control": "no-cache"})
+                                                   "Cache-Control": "no-cache",
+                                                   "User-Agent": VERIFIER_USER_AGENT})
                 with urlopen(request, timeout=20) as response:
                     data = response.read()
                     cors = response.headers.get("Access-Control-Allow-Origin")
-                if hashlib.sha256(data).digest() == expected and cors == "*":
+                failures = []
+                if hashlib.sha256(data).digest() != expected:
+                    failures.append("SHA256 mismatch")
+                if cors != "*":
+                    failures.append("Access-Control-Allow-Origin must be *")
+                if not failures:
                     return
-            except (URLError, TimeoutError):
-                pass
+                failure = "; ".join(failures)
+            except HTTPError as error:
+                failure = f"HTTP {error.code}"
+            except TimeoutError:
+                failure = "request timed out"
+            except URLError as error:
+                failure = "request timed out" if isinstance(error.reason, TimeoutError) else "network request failed"
             if attempt < 2:
                 time.sleep(2)
-        raise ValueError(f"Content or cross-origin verification failed: {name}")
+        raise ValueError(f"Content or cross-origin verification failed: {name} ({failure})")
 
     with ThreadPoolExecutor(max_workers=4) as pool:
         list(pool.map(verify_file, files))

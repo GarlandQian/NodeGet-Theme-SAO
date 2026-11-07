@@ -135,11 +135,15 @@ npm run typecheck
 
 ## 使用 GitHub Actions 发布 Release
 
-工作流文件进入仓库默认分支后，在 **Actions → Release NodeGet theme → Run workflow** 中选择要发布的分支并运行。GitHub 要求手动工作流先存在于默认分支，详见 [手动运行工作流](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow)。
+推送到 `main` 后，**Release NodeGet theme** 工作流会自动选择下一个补丁版本（例如 `1.3.8 → 1.3.9`），执行 Lint、测试、构建和 ZIP 校验，然后发布 GitHub Release；配置 Cloudflare 后还会自动部署分发站。无需手动打标签或点击工作流。
 
-发布前同步 `package.json`、`package-lock.json`（顶层及 `packages[""].version`）和 `nodeget-theme.json` 的版本号。工作流会执行 Lint、测试、构建和 ZIP 校验，再为实际构建的 commit 创建 `v<version>` 标签和 Release，上传主题 ZIP、预览图及 `SHA256SUMS`。使用仓库内置 `GITHUB_TOKEN`，无需配置个人 Token。
+工作流根据已有正式标签递增补丁版本，并同步 `package.json`、`package-lock.json` 和 `nodeget-theme.json`。所有检查通过后，才将自动版本提交和 `v<version>` 标签一起推送，再上传主题 ZIP、预览图及 `SHA256SUMS`。自动提交使用仓库内置 `GITHUB_TOKEN`，不会循环触发发布，也无需配置个人 Token。自动版本提交会回写 `main`，下次本地开发前先同步远端。
 
-也可以推送与版本号一致的 `v*` 标签触发发布。带 `-beta.1` 等后缀的版本会标记为预发布；已有 Release 不会被覆盖，已有标签也不会被移到另一个 commit。每次新发布请使用新版本号。
+若需要升到次版本或主版本，可在推送前将上述三个文件同步设为更高版本，工作流会使用该版本。也可推送与代码版本一致、位于 `main` 历史中的 `v*` 标签；带 `-beta.1` 等后缀的版本标记为预发布。
+
+发布串行执行，较新的源代码推送会取代尚未发布的旧运行。已有标签和 Release 不会被覆盖。失败后可以重跑原运行，或在 **Actions → Release NodeGet theme → Run workflow** 中选择 `main` 恢复；已经推送的自动版本提交和已经发布的完整 Release 会被复用，继续完成后续部署。
+
+若附件上传中断后留下草稿或不完整 Release，工作流会停止并说明原因，需要先处理该 Release 再重跑；已完整发布但 CF 部署失败的版本可以直接重跑部署工作流。
 
 发布说明可写在 `.github/release-notes/v<version>.md`，否则使用默认安装说明。安装时下载 **Releases 附件中的 `NodeGet-Theme-SAO-v<version>.zip`**；Actions Artifact 的外层压缩包还包含预览图和校验和，不能直接当作主题安装。
 
@@ -158,7 +162,7 @@ npm run typecheck
 API Token 按 [Cloudflare CI 文档](https://developers.cloudflare.com/pages/how-to/use-direct-upload-with-continuous-integration/)创建，并直接填入 GitHub Secret。首次运行会创建同名 Pages 项目，生产分支为 `main`；同名项目已存在时会复用，因此请填写用于该主题分发的专用项目名。Cloudflare 的实际 `pages.dev` 域名由 API 返回，不需要事先猜测或手填。
 
 - **已有 Release 首次上线**：在 Actions 中选择 **Deploy release to Cloudflare Pages → Run workflow**，分支选 `main`，`release_tag` 留空会部署最新正式版，也可明确填写当前最新正式版，例如 `v1.3.8`。
-- **后续自动更新**：按原流程发布正式 Release，发布成功后自动调用部署流程。预发布版本不更新这个稳定分发地址。
+- **后续自动更新**：推送 `main` 即可自动递增版本、发布正式 Release，并部署到相同的 Pages 地址。预发布版本不更新这个稳定分发地址。
 - **在 NodeGet 导入**：成功后的 Actions Summary 会显示 **Import URL**。将该根地址填写到 NodeGet 的远程主题导入界面；导入后在 NodeGet 后台配置自己的主控授权。
 
 工作流会填入主题的 `dist_page`，保留空的 `config.json.site_tokens`，配置跨域响应头，并逐文件核对线上内容与 CORS。Cloudflare 消费的 `_headers` 不列入 NodeGet 下载清单。生产部署串行运行，仅允许最新正式版上线；部署失败后可单独重跑部署工作流，无需重新发布已有 Release。
