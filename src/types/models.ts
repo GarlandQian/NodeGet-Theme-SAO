@@ -72,19 +72,6 @@ export const NodeInfoSchema = z
 
 export type NodeInfo = z.output<typeof NodeInfoSchema>;
 
-export interface NodeRealtime {
-  cpu: { usage: number };
-  ram: { total: number; used: number };
-  swap: { total: number; used: number };
-  load: { load1: number; load5: number; load15: number };
-  disk: { total: number; used: number };
-  network: { up: number; down: number; totalUp: number; totalDown: number };
-  connections: { tcp: number; udp: number };
-  uptime: number;
-  process: number;
-  updated_at?: string | number;
-}
-
 /** 展示用模型:扁平化的节点信息 + 实时指标 + 在线标志。 */
 export interface NodeMetrics {
   online: boolean | null;
@@ -116,6 +103,17 @@ export interface NodeMetrics {
   connectionsTcp: number;
   connectionsUdp: number;
   updatedAt: number;
+}
+
+/** NodeGet 直接生成的展示指标；缺失的累计计数器用 NaN 表示，交由 Store 保留上次读数。 */
+export type NodeMetricSnapshot = Omit<NodeMetrics, "online" | "dataStatus">;
+
+/** 主控读取状态与指标分开：读取失败时不生成假的零值快照。 */
+export interface NodeStatus {
+  online: boolean | null;
+  dataStatus: "ready" | "partial" | "unavailable" | "forbidden" | "error";
+  metrics: NodeMetricSnapshot | null;
+  missingFields?: string[];
 }
 
 export type MatrixColorTheme =

@@ -127,7 +127,7 @@ describe("NodeGet public API", () => {
     expect(nodes).toHaveLength(2); expect(nodes[0]!.uuid).not.toBe(nodes[1]!.uuid);
     expect(nodes.map(node => node.source_name)).toEqual(["One", "Two"]);
     const latest = await api.getNodesLatestStatus(nodes.map(node => node.uuid));
-    expect(latest[nodes[0]!.uuid]).toMatchObject({ connections: 8, connections_tcp: 5, connections_udp: 3, online: true });
+    expect(latest[nodes[0]!.uuid]).toMatchObject({ online: true, dataStatus: "ready", metrics: { cpuPct: 10, ramPct: 30, diskPct: 50, connectionsTcp: 5, connectionsUdp: 3 } });
     expect(state.call.mock.calls.every(([, method]) => !method.includes("common:"))).toBe(true);
     expect(state.call.mock.calls.some(([, method]) => method === "nodeget-server_list_all_agent_uuid")).toBe(true);
     expect(state.call.mock.calls.some(([, method]) => method === "agent-uuid_list_all")).toBe(false);
@@ -214,7 +214,7 @@ describe("NodeGet public API", () => {
     const nodes = await api.getNodes();
     expect(nodes).toHaveLength(2); expect(nodes[0]!.metadata_status).toBe("forbidden");
     const latest = await api.getNodesLatestStatus();
-    expect(latest[nodes[0]!.uuid]).toMatchObject({ cpu: 10, online: true });
+    expect(latest[nodes[0]!.uuid]).toMatchObject({ online: true, metrics: { cpuPct: 10 } });
   });
   it("keeps identity after reordering sources and rotating read tokens", async () => {
     const before = (await api.getNodes()).map(node => node.uuid).sort();
@@ -228,7 +228,34 @@ describe("NodeGet public API", () => {
     state.call.mockImplementation((url, method, params) => method === "agent_dynamic_summary_multi_last_query" ? Promise.reject(new Error("disconnected")) : successful(url, method, params));
     vi.advanceTimersByTime(2000);
     const latest = await api.getNodesLatestStatus();
-    expect(latest[nodes[0]!.uuid]).toMatchObject({ online: null, data_status: "error" });
+    expect(latest[nodes[0]!.uuid]).toMatchObject({ online: null, dataStatus: "error" });
+  });
+  it("uses asynchronously refreshed native traffic counters without requiring a newer dynamic snapshot", async () => {
+    vi.useFakeTimers();
+    const successful = state.call.getMockImplementation()!;
+    let release!: (value: unknown) => void;
+    const current = new Promise(resolve => { release = resolve; });
+    state.call.mockImplementation((url, method, params) => method === "agent_query_traffic_current"
+      ? current : successful(url, method, params));
+    const nodes = await api.getNodes();
+    const before = await api.getNodesLatestStatus([nodes[0]!.uuid]);
+    expect(before[nodes[0]!.uuid]!.metrics!.trafficUp).toBeNaN();
+    release([{ uuid: "same", interfaces: [{
+      interface_name: "eth0", total_transmitted: 0, total_received: 456, updated_at: Date.now(),
+    }] }]);
+    const after = await api.getNodesLatestStatus([nodes[0]!.uuid]);
+    expect(after[nodes[0]!.uuid]!.metrics).toMatchObject({
+      trafficUp: 0, trafficDown: 456, updatedAt: before[nodes[0]!.uuid]!.metrics!.updatedAt,
+    });
+  });
+  it("does not accept another probe's realtime fields as a NodeGet snapshot", async () => {
+    const successful = state.call.getMockImplementation()!;
+    state.call.mockImplementation((url, method, params) => method === "agent_dynamic_summary_multi_last_query"
+      ? Promise.resolve([{ uuid: "same", timestamp: Date.now(), cpu: { usage: 50 }, ram: { used: 1, total: 2 }, network: { up: 10, down: 20 } }])
+      : successful(url, method, params));
+    const nodes = await api.getNodes();
+    const latest = await api.getNodesLatestStatus([nodes[0]!.uuid]);
+    expect(latest[nodes[0]!.uuid]).toMatchObject({ online: null, dataStatus: "partial", metrics: null });
   });
   it("represents an unconfigured site explicitly", async () => {
     state.config.site_tokens = [];
@@ -246,9 +273,10 @@ describe("NodeGet public API", () => {
     });
     const nodes = await api.getNodes();
     const latest = await api.getNodesLatestStatus();
-    expect(latest[nodes[0]!.uuid]).toMatchObject({ online: null, data_status: "unavailable" });
-    expect(latest[nodes[1]!.uuid]).toMatchObject({ online: null, data_status: "partial", missing_fields: expect.arrayContaining(["used_memory"]) });
-    expect(latest[nodes[1]!.uuid]).not.toHaveProperty("ram");
+    expect(latest[nodes[0]!.uuid]).toMatchObject({ online: null, dataStatus: "unavailable" });
+    expect(latest[nodes[1]!.uuid]).toMatchObject({ online: null, dataStatus: "partial", missingFields: expect.arrayContaining(["used_memory"]) });
+    expect(latest[nodes[0]!.uuid]!.metrics).toBeNull();
+    expect(latest[nodes[1]!.uuid]!.metrics).toBeNull();
   });
   it("retains rate samples while exposing missing traffic snapshots without inventing zero totals", async () => {
     const nodes = await api.getNodes();

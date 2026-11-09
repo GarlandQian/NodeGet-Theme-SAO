@@ -13,7 +13,7 @@ const extension = {
   metadata_traffic_period_start: now - 86_400_000,
 };
 
-describe("extension-traffic compatibility", () => {
+describe("NodeGet extension-traffic integration", () => {
   it("reads published combined bytes, including zero, without fabricating directional counters", () => {
     expect(METADATA_KEYS).toContain("metadata_traffic_used");
     expect(readExtensionTrafficPeriod({ ...extension, metadata_traffic_used: "0" }, now)).toEqual({
@@ -66,8 +66,13 @@ describe("extension-traffic compatibility", () => {
     }
   });
 
-  it("publishes extension usage immediately without requesting traffic snapshots", async () => {
-    const metadata = { ...extension, metadata_traffic_period_start: Date.now() - 60_000, metadata_traffic_used: 456 };
+  it.each([
+    { used: 456, age: 60_000, startKnown: true, expected: { cycleUsed: 456, cyclePartial: false, cycleReason: undefined } },
+    { used: 0, age: 60_000, startKnown: true, expected: { cycleUsed: 0, cyclePartial: false, cycleReason: undefined } },
+    { used: 456, age: 60_000, startKnown: false, expected: { cycleUsed: 456, cyclePartial: true, cycleReason: "显示扩展已发布用量，周期起点尚未确认" } },
+    { used: 456, age: 31 * 86_400_000, startKnown: true, expected: { cycleUsed: null, cyclePartial: false, cycleReason: "流量周期已过期，等待重置 Worker 更新" } },
+  ])("publishes extension usage and availability without requesting traffic snapshots: $expected", async ({ used, age, startKnown, expected }) => {
+    const metadata = { ...extension, metadata_traffic_period_start: startKnown ? Date.now() - age : undefined, metadata_traffic_used: used };
     const call = vi.fn(async (method: string) => {
       if (method === "nodeget-server_list_all_agent_uuid") return { uuids: ["n"] };
       if (method === "kv_get_multi_value") return Object.entries(metadata).map(([key, value]) => ({ namespace: "n", key, value }));
@@ -83,8 +88,9 @@ describe("extension-traffic compatibility", () => {
     try {
       await source.getNodes();
       const latest = await source.latest();
-      expect(latest["s~n"]).toMatchObject({ traffic_cycle: { used: 456 }, quality: { traffic_cycle: "ok" } });
-      expect((latest["s~n"] as { traffic_cycle: object }).traffic_cycle).toEqual({ used: 456 });
+      expect(latest["s~n"]).toMatchObject({
+        online: true, dataStatus: "ready", metrics: { ...expected, cycleUp: null, cycleDown: null },
+      });
       expect(call.mock.calls.some(([method]) => method === "agent_query_traffic_total" || method === "agent_query_traffic")).toBe(false);
     } finally { source.close(); scheduler.close(); }
   });

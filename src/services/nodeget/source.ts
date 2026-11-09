@@ -1,8 +1,8 @@
-import type { LoadRecord, NodeInfo } from "@/types/models";
+import type { LoadRecord, NodeInfo, NodeStatus } from "@/types/models";
 import { isAccessDeniedError } from "@/services/requestErrors";
 import { HistoryScheduler, queryCompleteWindow } from "./history";
 import {
-  COST_KEYS, DYNAMIC_FIELDS, METADATA_KEYS, globalUuid, loadRecord, metadataByUuid,
+  COST_KEYS, DYNAMIC_FIELDS, METADATA_KEYS, globalUuid, metricsFromData, metadataByUuid,
   nodeFromData, number, row, rows, text, timestamp, withTrafficDeltas, type Row,
 } from "./normalize";
 import { PingReader } from "./ping";
@@ -134,7 +134,7 @@ export class NodeGetSource {
     return this.dynamicsPending;
   }
 
-  async latest(requested?: string[], options: RequestOptions = {}): Promise<Record<string, unknown>> {
+  async latest(requested?: string[], options: RequestOptions = {}): Promise<Record<string, NodeStatus>> {
     if (!this.nodesUpdatedAt) await this.getNodes(options);
     const ids = requested ?? this.uuids;
     if (!ids.length) return {};
@@ -143,18 +143,18 @@ export class NodeGetSource {
       this.setStatus("connected");
       this.traffic.refreshCurrent(ids);
       const now = Date.now();
-      return Object.fromEntries(ids.map(uuid => {
+      return Object.fromEntries(ids.map((uuid): [string, NodeStatus] => {
         const key = globalUuid(this.id, uuid);
         const dynamic = data.get(uuid);
-        if (!dynamic) return [key, { online: null, data_status: "unavailable", source_id: this.id }];
+        if (!dynamic) return [key, { online: null, dataStatus: "unavailable", metrics: null }];
         const time = timestamp(dynamic.timestamp ?? dynamic.storage_time);
         const missingFields = ["cpu_usage", "used_memory", "total_memory", "total_space", "available_space", "receive_speed", "transmit_speed", "uptime"]
           .filter(field => !Number.isFinite(number(dynamic[field])));
         // 缺少主指标时不把不完整的快照灌进数字 Store，否则默认值会伪造成 0。
         // 保留字段清单供界面解释，之前的有效快照可继续以“数据不完整”状态展示。
         if (!time || missingFields.length) return [key, {
-          online: null, data_status: time ? "partial" : "unavailable", source_id: this.id,
-          missing_fields: missingFields, updated_at: time,
+          online: null, dataStatus: time ? "partial" : "unavailable",
+          missingFields, metrics: null,
         }];
         const current = this.traffic.readCurrent(uuid);
         const metadata = this.metadata.get(uuid) ?? {};
@@ -167,21 +167,28 @@ export class NodeGetSource {
         const cycleReason = cycleAvailable && this.metadataStatus !== "ready"
           ? "流量配置读取失败，显示上次周期用量"
           : period ? undefined : extension?.reason;
-        const value = {
-          ...loadRecord(key, dynamic), online: time > 0 ? now - time < 30_000 && time < now + 300_000 : null,
-          updated_at: time, source_id: this.id, data_status: time > 0 ? "ready" : "unavailable",
-          ...(current && current.updatedAt >= time - 120_000 ? { net_total_up: current.up, net_total_down: current.down } : {}),
-          ...(cycleUsed !== undefined ? { traffic_cycle: { used: cycleUsed } } : period ? { traffic_cycle: { up: period.up, down: period.down } } : {}),
-          ...(cycleReason ? { traffic_cycle_reason: cycleReason } : {}),
-          quality: { traffic_total: current ? "ok" : "counter", traffic_cycle: cycleAvailable ? cyclePartial ? "partial" : "ok" : "unavailable" },
-        };
-        return [key, value];
+        const metrics = metricsFromData(dynamic);
+        if (current && current.updatedAt >= time - 120_000) {
+          metrics.trafficUp = current.up;
+          metrics.trafficDown = current.down;
+        }
+        metrics.cycleUsed = cycleUsed ?? null;
+        if (cycleUsed === undefined && period) {
+          metrics.cycleUp = period.up;
+          metrics.cycleDown = period.down;
+        }
+        metrics.cyclePartial = cycleAvailable && Boolean(cyclePartial);
+        metrics.cycleReason = cycleReason;
+        return [key, {
+          online: now - time < 30_000 && time < now + 300_000,
+          dataStatus: "ready", metrics,
+        }];
       }));
     } catch (error) {
       aborted(options.signal);
       this.setStatus("error", publicError(error));
-      return Object.fromEntries(ids.map(uuid => [globalUuid(this.id, uuid), {
-        online: null, data_status: isAccessDeniedError(error) ? "forbidden" : "error", source_id: this.id,
+      return Object.fromEntries(ids.map((uuid): [string, NodeStatus] => [globalUuid(this.id, uuid), {
+        online: null, dataStatus: isAccessDeniedError(error) ? "forbidden" : "error", metrics: null,
       }]));
     }
   }

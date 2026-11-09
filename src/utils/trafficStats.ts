@@ -1,23 +1,7 @@
-import type { LoadRecord } from "@/types/models";
-
 export const TRAFFIC_UP_METRIC = "traffic.up";
 export const TRAFFIC_DOWN_METRIC = "traffic.down";
 export const RATE_UP_METRIC = "net.out.rate";
 export const RATE_DOWN_METRIC = "net.in.rate";
-
-export const TODAY_TRAFFIC_METRIC_KEYS = [
-  TRAFFIC_UP_METRIC,
-  TRAFFIC_DOWN_METRIC,
-  RATE_UP_METRIC,
-  RATE_DOWN_METRIC,
-] as const;
-
-export const TODAY_TRAFFIC_AGGREGATION = {
-  [TRAFFIC_UP_METRIC]: "sum",
-  [TRAFFIC_DOWN_METRIC]: "sum",
-  [RATE_UP_METRIC]: "max",
-  [RATE_DOWN_METRIC]: "max",
-} as const;
 
 export interface TrafficMetricSeries {
   metricKey: string;
@@ -138,79 +122,6 @@ export function buildTodayTrafficMetricSamples(
     }
   }
   return [...samples.values()].sort((left, right) => right.timeMs - left.timeMs);
-}
-
-function recordTimeMs(record: LoadRecord) {
-  if (typeof record.time === "number") {
-    return record.time > 1_000_000_000_000 ? record.time : record.time * 1000;
-  }
-  return Date.parse(record.time);
-}
-
-function counterDelta(current: number, previous: number) {
-  if (!Number.isFinite(current) || current < 0) return 0;
-  if (!Number.isFinite(previous) || previous < 0) return 0;
-  return current >= previous ? current - previous : current;
-}
-
-export function summarizeTodayTrafficRecords(
-  uuid: string,
-  records: LoadRecord[],
-  startMs: number,
-  endMs: number,
-): TodayTrafficStat {
-  const stat = emptyStat(uuid);
-  const sorted = records
-    .map((record) => ({ record, timeMs: recordTimeMs(record) }))
-    .filter(({ timeMs }) => Number.isFinite(timeMs) && timeMs <= endMs)
-    .sort((left, right) => left.timeMs - right.timeMs);
-
-  let previous: LoadRecord | null = null;
-  for (const item of sorted) {
-    const { record, timeMs } = item;
-    if (timeMs < startMs) {
-      previous = record;
-      continue;
-    }
-
-    stat.hasSamples = true;
-    stat.sampleCount += 1;
-    if (previous) {
-      stat.trafficUp += counterDelta(record.net_total_up, previous.net_total_up);
-      stat.trafficDown += counterDelta(record.net_total_down, previous.net_total_down);
-    }
-    const netOut = Number.isFinite(record.net_out) ? record.net_out : 0;
-    const netIn = Number.isFinite(record.net_in) ? record.net_in : 0;
-    if (netOut > stat.peakUp) {
-      stat.peakUp = Math.max(0, netOut);
-      stat.peakUpAt = timeMs;
-    }
-    if (netIn > stat.peakDown) {
-      stat.peakDown = Math.max(0, netIn);
-      stat.peakDownAt = timeMs;
-    }
-    previous = record;
-  }
-
-  return stat;
-}
-
-export function buildTodayTrafficRecordSamples(
-  records: LoadRecord[],
-  startMs: number,
-  endMs: number,
-): TodayTrafficSample[] {
-  return records
-    .map((record) => ({ record, timeMs: recordTimeMs(record) }))
-    .filter(
-      ({ timeMs }) => Number.isFinite(timeMs) && timeMs >= startMs && timeMs <= endMs,
-    )
-    .map(({ record, timeMs }) => ({
-      timeMs,
-      up: Math.max(0, Number.isFinite(record.net_out) ? record.net_out : 0),
-      down: Math.max(0, Number.isFinite(record.net_in) ? record.net_in : 0),
-    }))
-    .sort((left, right) => right.timeMs - left.timeMs);
 }
 
 export function hasTrafficData(stat: TodayTrafficStat | undefined | null): boolean {

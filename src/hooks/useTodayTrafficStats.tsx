@@ -38,13 +38,11 @@ export interface TodayTrafficStatsResponse {
   rangeStartMs: number;
   rangeEndMs: number;
   intervalSeconds?: number;
-  source: "metrics" | "records";
 }
 
 export interface NodeTodayTrafficView {
   available: boolean;
   stat: TodayTrafficStat | null;
-  source: TodayTrafficStatsResponse["source"] | undefined;
   isPending: boolean;
   isError: boolean;
   isFetching: boolean;
@@ -55,7 +53,6 @@ export interface NodeTodayTrafficView {
 
 interface TodayTrafficNodeQueryState {
   stat: TodayTrafficStat | null;
-  source: TodayTrafficStatsResponse["source"] | undefined;
   isPending: boolean;
   isError: boolean;
   isFetching: boolean;
@@ -71,7 +68,6 @@ interface TodayTrafficStatsContextValue {
 const EMPTY_REFETCH = async () => undefined;
 const EMPTY_NODE_QUERY_STATE: TodayTrafficNodeQueryState = {
   stat: null,
-  source: undefined,
   isPending: true,
   isError: false,
   isFetching: false,
@@ -95,7 +91,6 @@ function equalNodeQueryState(
 ) {
   return Boolean(left) &&
     left?.stat === right.stat &&
-    left.source === right.source &&
     left.isPending === right.isPending &&
     left.isError === right.isError &&
     left.isFetching === right.isFetching &&
@@ -187,7 +182,6 @@ export function TodayTrafficStatsProvider({
       if (!query) continue;
       states[index] = {
         stat: query.data?.rows[0] ?? null,
-        source: query.data?.source,
         isPending: query.isPending,
         isError: query.isError,
         isFetching: query.isFetching,
@@ -239,7 +233,6 @@ export function useNodeTodayTraffic(uuid: string): NodeTodayTrafficView {
     return {
       available: false,
       stat: null,
-      source: undefined,
       isPending: false,
       isError: false,
       isFetching: false,
@@ -251,7 +244,6 @@ export function useNodeTodayTraffic(uuid: string): NodeTodayTrafficView {
   return {
     available: true,
     stat: nodeQuery.stat,
-    source: nodeQuery.source,
     isPending: nodeQuery.isPending,
     isError: nodeQuery.isError,
     isFetching: nodeQuery.isFetching,
@@ -310,7 +302,6 @@ function getTodayTrafficQueryOptions(
         rangeStartMs: data.rangeStartMs,
         rangeEndMs: data.rangeEndMs,
         intervalSeconds: data.intervalSeconds,
-        source: "metrics",
       };
     },
     enabled: stableUuids.length > 0,
@@ -318,7 +309,7 @@ function getTodayTrafficQueryOptions(
     staleTime: 60_000,
     refetchInterval: (query) =>
       getTodayTrafficRefreshInterval(
-        query.state.data?.source,
+        query.state.data != null,
         query.state.error != null,
       ),
     refetchOnWindowFocus: "always",

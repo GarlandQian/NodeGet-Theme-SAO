@@ -1,6 +1,6 @@
 import { HttpRequestError, isAccessDeniedError } from "@/services/requestErrors";
 import { getThemePublicConfig, loadNodeGetConfig, saveLocalThemeSettings } from "@/services/nodegetConfig";
-import type { LoadRecordsResponse, NodeInfo, PingRecordsResponse, PingTask, PingTaskStats, PublicConfig } from "@/types/models";
+import type { LoadRecordsResponse, NodeInfo, NodeStatus, PingRecordsResponse, PingTask, PingTaskStats, PublicConfig } from "@/types/models";
 import { RATE_DOWN_METRIC, RATE_UP_METRIC, TRAFFIC_DOWN_METRIC, TRAFFIC_UP_METRIC, type TrafficMetricSeries } from "@/utils/trafficStats";
 import { withTimeoutSignal } from "@/utils/abort";
 import { HistoryScheduler } from "./nodeget/history";
@@ -133,7 +133,7 @@ export async function getNodes(options?: RequestOptions): Promise<NodeInfo[]> {
   return nodes;
 }
 
-export async function getNodesLatestStatus(uuids?: string[], options?: RequestOptions): Promise<Record<string, unknown>> {
+export async function getNodesLatestStatus(uuids?: string[], options?: RequestOptions): Promise<Record<string, NodeStatus>> {
   const available = await ensureSources(options);
   const results = await Promise.allSettled([...available.values()].map(async source => {
     const selected = uuids?.filter(uuid => uuid.startsWith(`${source.id}~`)).map(uuid => resolveNode(uuid, available).uuid);

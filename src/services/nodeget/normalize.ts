@@ -1,4 +1,4 @@
-import { NodeInfoSchema, type LoadRecord, type NodeInfo } from "@/types/models";
+import { NodeInfoSchema, type LoadRecord, type NodeInfo, type NodeMetricSnapshot } from "@/types/models";
 
 export type Row = Record<string, unknown>;
 export const DYNAMIC_FIELDS = [
@@ -113,6 +113,28 @@ export function nodeFromData(
     ...(extension ? { traffic_billing_mode: billingMode, traffic_period: period } : {}),
     metadata_status: statuses.metadata, static_status: statuses.static,
   });
+}
+
+/** 实时读数直接进入展示模型，不经过历史记录或其他探针的数据结构。 */
+export function metricsFromData(dynamic: Row): NodeMetricSnapshot {
+  const ramUsed = number(dynamic.used_memory, 0);
+  const ramTotal = number(dynamic.total_memory, 0);
+  const diskTotal = number(dynamic.total_space, 0);
+  const diskUsed = diskTotal - number(dynamic.available_space, 0);
+  return {
+    cpuPct: number(dynamic.cpu_usage, 0),
+    ramUsed, ramTotal, ramPct: ramTotal > 0 ? ramUsed / ramTotal * 100 : 0,
+    swapUsed: number(dynamic.used_swap, 0), swapTotal: number(dynamic.total_swap),
+    diskUsed, diskTotal, diskPct: diskTotal > 0 ? diskUsed / diskTotal * 100 : 0,
+    netUp: number(dynamic.transmit_speed, 0), netDown: number(dynamic.receive_speed, 0),
+    trafficUp: number(dynamic.total_transmitted), trafficDown: number(dynamic.total_received),
+    cycleUp: null, cycleDown: null, cycleUsed: null,
+    uptime: number(dynamic.uptime, 0),
+    load1: number(dynamic.load_one, 0), load5: number(dynamic.load_five, 0), load15: number(dynamic.load_fifteen, 0),
+    process: number(dynamic.process_count, 0),
+    connectionsTcp: number(dynamic.tcp_connections, 0), connectionsUdp: number(dynamic.udp_connections, 0),
+    updatedAt: timestamp(dynamic.timestamp ?? dynamic.storage_time),
+  };
 }
 
 export function loadRecord(client: string, dynamic: Row): LoadRecord {

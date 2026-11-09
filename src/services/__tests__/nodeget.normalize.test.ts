@@ -1,7 +1,30 @@
 import { describe, expect, it } from "vitest";
-import { globalUuid, nodeFromData, sourceIdentity, timestamp, withTrafficDeltas } from "../nodeget/normalize";
+import { globalUuid, metricsFromData, nodeFromData, sourceIdentity, timestamp, withTrafficDeltas } from "../nodeget/normalize";
 
 describe("NodeGet presentation conversion", () => {
+  it("maps native realtime fields straight to display metrics without reading old probe aliases", () => {
+    const metrics = metricsFromData({
+      timestamp: 1_800_000_000_000, cpu_usage: 25, used_memory: 30, total_memory: 100,
+      used_swap: 5, total_swap: 10, total_space: 200, available_space: 50,
+      transmit_speed: 120, receive_speed: 240, total_transmitted: 0, total_received: 500,
+      load_one: 1, load_five: 2, load_fifteen: 3, uptime: 100, process_count: 20,
+      tcp_connections: 7, udp_connections: 4,
+      cpu: { usage: 99 }, ram: { used: 99, total: 100 }, connections: 100,
+      connections_tcp: 90, connections_udp: 10, cycle_up: 999, traffic_up: 999,
+    });
+    expect(metrics).toEqual({
+      cpuPct: 25, ramUsed: 30, ramTotal: 100, ramPct: 30, swapUsed: 5, swapTotal: 10,
+      diskUsed: 150, diskTotal: 200, diskPct: 75, netUp: 120, netDown: 240,
+      trafficUp: 0, trafficDown: 500, cycleUp: null, cycleDown: null, cycleUsed: null,
+      load1: 1, load5: 2, load15: 3, uptime: 100, process: 20,
+      connectionsTcp: 7, connectionsUdp: 4, updatedAt: 1_800_000_000_000,
+    });
+    const missing = metricsFromData({ connections: 20, connections_udp: 5 });
+    expect(missing.connectionsTcp).toBe(0);
+    expect(missing.trafficUp).toBeNaN();
+    expect(missing.trafficDown).toBeNaN();
+    expect(missing.swapTotal).toBeNaN();
+  });
   it("keeps source and node identities stable and isolates the same UUID across sources", () => {
     const first = sourceIdentity("wss://one.example/nodeget/rpc");
     expect(first).toBe(sourceIdentity("wss://one.example/nodeget/rpc"));

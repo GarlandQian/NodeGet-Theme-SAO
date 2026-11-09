@@ -1,8 +1,7 @@
-import type { NodeInfo, NodeMetrics, NodeRealtime, TrafficTrendSample } from "@/types/models";
+import type { NodeInfo, NodeMetrics, NodeStatus, TrafficTrendSample } from "@/types/models";
 import { getNodes, getNodesLatestStatus } from "@/services/api";
 
 type Listener = () => void;
-type RealtimePayload = Record<string, unknown>;
 
 interface State {
   metaByUuid: Record<string, NodeInfo>;
@@ -163,54 +162,22 @@ export function resolveTrafficTotal(previous: number, raw: number | undefined): 
   return typeof raw === "number" && Number.isFinite(raw) && raw >= 0 ? raw : previous;
 }
 
-function resolveTrafficTotals(previous: NodeMetrics, nextUp: number, nextDown: number) {
+/** 消费 NodeGet 已生成的展示指标，只处理上次有效读数与本次读取状态的合并。 */
+export function mergeNodeStatus(previous: NodeMetrics, status?: NodeStatus): NodeMetrics {
+  const online = status?.online ?? null;
+  const dataStatus = status?.dataStatus ?? "unavailable";
+  const metrics = status?.metrics;
+  if (!metrics) {
+    return {
+      ...previous, online, dataStatus,
+      cycleUp: null, cycleDown: null, cycleUsed: null, cyclePartial: false, cycleReason: undefined,
+    };
+  }
   return {
-    up: resolveTrafficTotal(previous.trafficUp, nextUp),
-    down: resolveTrafficTotal(previous.trafficDown, nextDown),
-  };
-}
-
-function mergeRealtime(
-  metrics: NodeMetrics,
-  rt: NodeRealtime,
-  online: boolean | null,
-): NodeMetrics {
-  const ramUsed = rt.ram.used;
-  const ramTotal = rt.ram.total;
-  const swapUsed = rt.swap.used;
-  const swapTotal = rt.swap.total;
-  const diskUsed = rt.disk.used;
-  const diskTotal = rt.disk.total;
-  const updatedAt = toTimestamp(rt.updated_at);
-  const trafficTotals = resolveTrafficTotals(
-    metrics,
-    rt.network?.totalUp ?? 0,
-    rt.network?.totalDown ?? 0,
-  );
-
-  return {
-    online,
-    cpuPct: rt.cpu?.usage ?? 0,
-    ramUsed,
-    ramTotal,
-    ramPct: ramTotal > 0 ? (ramUsed / ramTotal) * 100 : 0,
-    swapUsed,
-    swapTotal,
-    diskUsed,
-    diskTotal,
-    diskPct: diskTotal > 0 ? (diskUsed / diskTotal) * 100 : 0,
-    netUp: rt.network?.up ?? 0,
-    netDown: rt.network?.down ?? 0,
-    trafficUp: trafficTotals.up,
-    trafficDown: trafficTotals.down,
-    uptime: rt.uptime ?? 0,
-    load1: rt.load?.load1 ?? 0,
-    load5: rt.load?.load5 ?? 0,
-    load15: rt.load?.load15 ?? 0,
-    process: rt.process ?? 0,
-    connectionsTcp: rt.connections?.tcp ?? 0,
-    connectionsUdp: rt.connections?.udp ?? 0,
-    updatedAt: updatedAt > 0 ? updatedAt : metrics.updatedAt,
+    ...metrics, online, dataStatus,
+    swapTotal: Number.isFinite(metrics.swapTotal) ? metrics.swapTotal : previous.swapTotal,
+    trafficUp: resolveTrafficTotal(previous.trafficUp, metrics.trafficUp),
+    trafficDown: resolveTrafficTotal(previous.trafficDown, metrics.trafficDown),
   };
 }
 
@@ -491,175 +458,7 @@ function ensureScrollTrackingStarted() {
   window.addEventListener("scroll", markScrollActivity, { passive: true });
 }
 
-function asNumber(value: unknown, fallback = 0): number {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string") {
-    const parsed = Number(value);
-    if (Number.isFinite(parsed)) return parsed;
-  }
-  return fallback;
-}
-
-function asRecord(value: unknown): RealtimePayload {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as RealtimePayload)
-    : {};
-}
-
-export function cycleTrafficFromLatest(raw: unknown): { up: number | null; down: number | null; used: number | null } {
-  const payload = asRecord(raw);
-  const quality = asRecord(payload.quality);
-  const value = (input: unknown) =>
-    typeof input === "number" && Number.isSafeInteger(input) && input >= 0 ? input : null;
-
-  if (payload.traffic_cycle != null && typeof payload.traffic_cycle === "object") {
-    const cycleRecord = asRecord(payload.traffic_cycle);
-    return {
-      up: value(cycleRecord.up ?? cycleRecord.traffic_up),
-      down: value(cycleRecord.down ?? cycleRecord.traffic_down),
-      used: value(cycleRecord.used),
-    };
-  }
-  if (quality.traffic_cycle === "ok") {
-    return { up: value(payload.traffic_up), down: value(payload.traffic_down), used: null };
-  }
-  if (payload.cycle_up != null || payload.cycle_down != null) {
-    return { up: value(payload.cycle_up), down: value(payload.cycle_down), used: null };
-  }
-  return { up: null, down: null, used: null };
-}
-
-function asBoolean(value: unknown, fallback: boolean): boolean {
-  if (typeof value === "boolean") return value;
-  if (typeof value === "number") return value !== 0;
-  if (typeof value === "string") {
-    const normalized = value.trim().toLowerCase();
-    if (normalized === "" || normalized === "0" || normalized === "false") return false;
-    if (normalized === "1" || normalized === "true") return true;
-  }
-  return fallback;
-}
-
-export function resolveOnline(rawRecord: unknown): boolean | null {
-  if (rawRecord == null) return null;
-  if (typeof rawRecord === "boolean") return rawRecord;
-  const record = asRecord(rawRecord);
-  if (record.online === null || Object.keys(record).length === 0) return null;
-  return asBoolean(record.online, Object.keys(record).length > 0);
-}
-
-function toTimestamp(value: string | number | undefined): number {
-  if (typeof value === "number") {
-    return value > 1_000_000_000_000 ? value : value * 1000;
-  }
-  if (!value) return 0;
-  const numeric = Number(value);
-  if (Number.isFinite(numeric) && numeric > 0) {
-    return numeric > 1_000_000_000_000 ? numeric : numeric * 1000;
-  }
-  const parsed = Date.parse(value);
-  return Number.isNaN(parsed) ? 0 : parsed;
-}
-
-// 旧扁平协议的 connections 是 TCP+UDP 合计。
-export function resolveFlatConnectionsTcp(payload: RealtimePayload): number {
-  if (payload.connections_tcp != null) return asNumber(payload.connections_tcp);
-  return Math.max(0, asNumber(payload.connections) - asNumber(payload.connections_udp));
-}
-
-function normalizeRealtime(
-  raw: unknown,
-  meta: NodeInfo,
-  metrics: NodeMetrics,
-): NodeRealtime | null {
-  const payload = asRecord(raw);
-  if (payload.online === null || Object.keys(payload).length === 0 ||
-      !["cpu", "ram", "network", "net_in", "net_out"].some((key) => key in payload)) return null;
-
-  const cpu = asRecord(payload.cpu);
-  const ram = asRecord(payload.ram);
-  const swap = asRecord(payload.swap);
-  const load = asRecord(payload.load);
-  const disk = asRecord(payload.disk);
-  const network = asRecord(payload.network);
-  const connections = asRecord(payload.connections);
-  const hasNestedShape =
-    Object.keys(cpu).length > 0 ||
-    Object.keys(ram).length > 0 ||
-    Object.keys(network).length > 0;
-
-  if (hasNestedShape) {
-    return {
-      cpu: { usage: asNumber(cpu.usage) },
-      ram: {
-        total: asNumber(ram.total, metrics.ramTotal || meta.mem_total),
-        used: asNumber(ram.used),
-      },
-      swap: {
-        total: asNumber(swap.total, metrics.swapTotal || meta.swap_total),
-        used: asNumber(swap.used),
-      },
-      load: {
-        load1: asNumber(load.load1),
-        load5: asNumber(load.load5),
-        load15: asNumber(load.load15),
-      },
-      disk: {
-        total: asNumber(disk.total, metrics.diskTotal || meta.disk_total),
-        used: asNumber(disk.used),
-      },
-      network: {
-        up: asNumber(network.up),
-        down: asNumber(network.down),
-        totalUp: asNumber(network.totalUp, metrics.trafficUp),
-        totalDown: asNumber(network.totalDown, metrics.trafficDown),
-      },
-      connections: {
-        tcp: asNumber(connections.tcp),
-        udp: asNumber(connections.udp),
-      },
-      uptime: asNumber(payload.uptime),
-      process: asNumber(payload.process),
-      updated_at: (payload.updated_at ?? payload.time) as string | number | undefined,
-    };
-  }
-
-  return {
-    cpu: { usage: asNumber(payload.cpu) },
-    ram: {
-      total: asNumber(payload.ram_total, metrics.ramTotal || meta.mem_total),
-      used: asNumber(payload.ram),
-    },
-    swap: {
-      total: asNumber(payload.swap_total, metrics.swapTotal || meta.swap_total),
-      used: asNumber(payload.swap),
-    },
-    load: {
-      load1: asNumber(payload.load),
-      load5: asNumber(payload.load5),
-      load15: asNumber(payload.load15),
-    },
-    disk: {
-      total: asNumber(payload.disk_total, metrics.diskTotal || meta.disk_total),
-      used: asNumber(payload.disk),
-    },
-    network: {
-      up: asNumber(payload.net_out),
-      down: asNumber(payload.net_in),
-      totalUp: asNumber(payload.net_total_up, metrics.trafficUp),
-      totalDown: asNumber(payload.net_total_down, metrics.trafficDown),
-    },
-    connections: {
-      tcp: resolveFlatConnectionsTcp(payload),
-      udp: asNumber(payload.connections_udp),
-    },
-    uptime: asNumber(payload.uptime),
-    process: asNumber(payload.process),
-    updated_at: (payload.updated_at ?? payload.time) as string | number | undefined,
-  };
-}
-
-function applyLatestStatus(records: Record<string, unknown>) {
+function applyLatestStatus(records: Record<string, NodeStatus>) {
   const touchedMetrics = new Set<string>();
   const touchedTrafficTrends = new Set<string>();
   // 安静 tick 不克隆整个索引。
@@ -670,20 +469,7 @@ function applyLatestStatus(records: Record<string, unknown>) {
     const meta = state.metaByUuid[uuid];
     const prev = state.metricsByUuid[uuid];
     if (!meta || !prev) continue;
-    const rawRecord = records[uuid];
-    const online = resolveOnline(rawRecord);
-    const realtime = normalizeRealtime(rawRecord, meta, prev);
-    const merged = realtime
-      ? mergeRealtime(prev, realtime, online)
-      : { ...prev, online };
-    merged.dataStatus = String(asRecord(rawRecord).data_status || "");
-    const cycle = cycleTrafficFromLatest(rawRecord);
-    merged.cycleUp = cycle.up;
-    merged.cycleDown = cycle.down;
-    merged.cycleUsed = cycle.used;
-    merged.cyclePartial = asRecord(asRecord(rawRecord).quality).traffic_cycle === "partial";
-    merged.cycleReason = typeof asRecord(rawRecord).traffic_cycle_reason === "string"
-      ? String(asRecord(rawRecord).traffic_cycle_reason) : undefined;
+    const merged = mergeNodeStatus(prev, records[uuid]);
 
     if (!shallowEqualMetrics(prev, merged)) {
       if (nextMetricsByUuid === state.metricsByUuid) {
@@ -751,7 +537,7 @@ function syncNodeInfo() {
 
 function applyNodeSync(
   nodes: NodeInfo[],
-  initialStatusRecords?: Record<string, unknown> | null,
+  initialStatusRecords?: Record<string, NodeStatus> | null,
 ) {
   const order = nodes.map((node) => node.uuid);
   const touchedMeta = new Set<string>();
@@ -774,23 +560,7 @@ function applyNodeSync(
     if (previousMetrics) {
       nextMetrics = alignEmptyMetricsTotals(previousMetrics, info);
     } else {
-      const base = emptyMetrics(info, null);
-      const rawRecord = initialStatusRecords?.[info.uuid];
-      if (rawRecord != null) {
-        const online = resolveOnline(rawRecord);
-        const realtime = normalizeRealtime(rawRecord, info, base);
-        nextMetrics = realtime ? mergeRealtime(base, realtime, online) : { ...base, online };
-        const cycle = cycleTrafficFromLatest(rawRecord);
-        nextMetrics.dataStatus = String(asRecord(rawRecord).data_status || "");
-        nextMetrics.cycleUp = cycle.up;
-        nextMetrics.cycleDown = cycle.down;
-        nextMetrics.cycleUsed = cycle.used;
-        nextMetrics.cyclePartial = asRecord(asRecord(rawRecord).quality).traffic_cycle === "partial";
-        nextMetrics.cycleReason = typeof asRecord(rawRecord).traffic_cycle_reason === "string"
-          ? String(asRecord(rawRecord).traffic_cycle_reason) : undefined;
-      } else {
-        nextMetrics = base;
-      }
+      nextMetrics = mergeNodeStatus(emptyMetrics(info, null), initialStatusRecords?.[info.uuid]);
     }
     metricsByUuid[info.uuid] = nextMetrics;
     if (!isUnchanged) {
@@ -930,7 +700,9 @@ async function refreshLatestStatus() {
     }
   } catch {
     if (controller.signal.aborted) return;
-    const applied = applyLatestStatus(Object.fromEntries(state.order.map(uuid => [uuid, { online: null, data_status: "error" }])));
+    const applied = applyLatestStatus(Object.fromEntries(state.order.map(uuid => [uuid, {
+      online: null, dataStatus: "error", metrics: null,
+    }])));
     commit(
       {
         ...state,
@@ -965,7 +737,7 @@ async function bootstrap() {
     const uuids = nodes.map((n) => n.uuid);
 
     // 2. 携带获取到的节点 uuids 立即请求全量真实运行状态
-    let statusRecords: Record<string, unknown> | null = null;
+    let statusRecords: Record<string, NodeStatus> | null = null;
     if (uuids.length > 0) {
       statusRecords = await getNodesLatestStatus(uuids, {
         timeout: LIVE_STATUS_REQUEST_TIMEOUT_MS,

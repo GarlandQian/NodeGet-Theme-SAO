@@ -1,12 +1,9 @@
 import { describe, expect, it } from "vitest";
-import type { LoadRecord } from "@/types/models";
 import {
   buildTodayTrafficMetricSamples,
-  buildTodayTrafficRecordSamples,
   RATE_DOWN_METRIC,
   RATE_UP_METRIC,
   summarizeTodayTrafficMetrics,
-  summarizeTodayTrafficRecords,
   TRAFFIC_DOWN_METRIC,
   TRAFFIC_UP_METRIC,
   type TrafficMetricSeries,
@@ -21,31 +18,6 @@ function metricSeries(
     client: "node-a",
     intervalSeconds: 300,
     points: values.map(([time, value, count = 1]) => ({ time, value, count })),
-  };
-}
-
-function record(time: string, overrides: Partial<LoadRecord> = {}): LoadRecord {
-  return {
-    cpu: 0,
-    gpu: 0,
-    ram: 0,
-    ram_total: 0,
-    swap: 0,
-    swap_total: 0,
-    load: 0,
-    temp: 0,
-    disk: 0,
-    disk_total: 0,
-    net_in: 0,
-    net_out: 0,
-    net_total_up: 0,
-    net_total_down: 0,
-    process: 0,
-    connections: 0,
-    connections_udp: 0,
-    client: "node-a",
-    time,
-    ...overrides,
   };
 }
 
@@ -83,39 +55,6 @@ describe("today traffic stats", () => {
     expect(stats[1]).toMatchObject({ uuid: "node-b", hasSamples: false, sampleCount: 0 });
   });
 
-  it("derives counter deltas across resets for the compatibility path", () => {
-    const start = Date.parse("2026-07-16T00:00:00Z");
-    const stats = summarizeTodayTrafficRecords(
-      "node-a",
-      [
-        record("2026-07-15T23:55:00Z", { net_total_up: 100, net_total_down: 200 }),
-        record("2026-07-16T00:05:00Z", {
-          net_total_up: 150,
-          net_total_down: 260,
-          net_out: 12,
-          net_in: 24,
-        }),
-        record("2026-07-16T00:10:00Z", {
-          net_total_up: 20,
-          net_total_down: 30,
-          net_out: 30,
-          net_in: 18,
-        }),
-      ],
-      start,
-      Date.parse("2026-07-16T01:00:00Z"),
-    );
-
-    expect(stats).toMatchObject({
-      trafficUp: 70,
-      trafficDown: 90,
-      peakUp: 30,
-      peakDown: 24,
-      sampleCount: 2,
-      hasSamples: true,
-    });
-  });
-
   it("does not assign a pseudo peak timestamp when every rate sample is zero", () => {
     const metricStat = summarizeTodayTrafficMetrics(
       [
@@ -124,20 +63,8 @@ describe("today traffic stats", () => {
       ],
       ["node-a"],
     )[0];
-    const recordStat = summarizeTodayTrafficRecords(
-      "node-a",
-      [record("2026-07-16T00:05:00Z")],
-      Date.parse("2026-07-16T00:00:00Z"),
-      Date.parse("2026-07-16T01:00:00Z"),
-    );
 
     expect(metricStat).toMatchObject({
-      peakUp: 0,
-      peakUpAt: null,
-      peakDown: 0,
-      peakDownAt: null,
-    });
-    expect(recordStat).toMatchObject({
       peakUp: 0,
       peakUpAt: null,
       peakDown: 0,
@@ -163,18 +90,6 @@ describe("today traffic stats", () => {
     expect(metricSamples).toEqual([
       { timeMs: Date.parse("2026-07-16T00:05:00Z"), up: 20, down: 40 },
       { timeMs: Date.parse("2026-07-16T00:00:00Z"), up: 10, down: 30 },
-    ]);
-
-    const recordSamples = buildTodayTrafficRecordSamples(
-      [
-        record("2026-07-15T23:55:00Z", { net_out: 1, net_in: 2 }),
-        record("2026-07-16T00:05:00Z", { net_out: 3, net_in: 4 }),
-      ],
-      Date.parse("2026-07-16T00:00:00Z"),
-      Date.parse("2026-07-16T01:00:00Z"),
-    );
-    expect(recordSamples).toEqual([
-      { timeMs: Date.parse("2026-07-16T00:05:00Z"), up: 3, down: 4 },
     ]);
   });
 });

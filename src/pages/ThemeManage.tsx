@@ -3881,7 +3881,7 @@ function draftToThemeSettings(targetDraft: ThemeDraft): ThemeSettings {
                 </div>
               </InstancePanel>
 
-              {/* 面板 2：三大项目反馈与代码仓库 */}
+              {/* 面板 2：NodeGet 主题反馈与代码仓库 */}
               <InstancePanel
                 kicker="反馈"
                 title="项目反馈与代码仓库"
@@ -3889,7 +3889,7 @@ function draftToThemeSettings(targetDraft: ThemeDraft): ThemeSettings {
               >
                 <div className="space-y-4">
                   <p className="text-xs text-(--text-muted) leading-relaxed">
-                    SAO 主题目前适配了三大探针。为确保您的反馈能由对应仓库维护者快速跟进，请优先在当前使用的项目仓库中提交 Issue。
+                    本主题面向 NodeGet。主题的功能建议和使用问题，请在下方 NodeGet SAO 项目仓库中提交 Issue，方便维护者跟进。
                   </p>
 
                   <div className="grid grid-cols-1 gap-3.5">
