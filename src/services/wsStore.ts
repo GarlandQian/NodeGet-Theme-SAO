@@ -214,14 +214,22 @@ function shallowEqualMetrics(a: NodeMetrics, b: NodeMetrics) {
   );
 }
 
-function shallowEqualNodeInfo(a: NodeInfo, b: NodeInfo) {
+export function shallowEqualNodeInfo(a: NodeInfo, b: NodeInfo) {
   return (
     a.uuid === b.uuid &&
     a.source_id === b.source_id &&
     a.source_name === b.source_name &&
     a.name === b.name &&
+    a.native_uuid === b.native_uuid &&
+    a.metadata_status === b.metadata_status &&
+    a.static_status === b.static_status &&
+    a.cost_status === b.cost_status &&
     a.group === b.group &&
     a.region === b.region &&
+    a.country === b.country &&
+    a.provider === b.provider &&
+    a.city === b.city &&
+    a.asn === b.asn &&
     a.hidden === b.hidden &&
     a.ipv4 === b.ipv4 &&
     a.ipv6 === b.ipv6 &&
@@ -237,6 +245,7 @@ function shallowEqualNodeInfo(a: NodeInfo, b: NodeInfo) {
     a.disk_total === b.disk_total &&
     a.weight === b.weight &&
     a.price === b.price &&
+    a.price_configured === b.price_configured &&
     a.billing_cycle === b.billing_cycle &&
     a.auto_renewal === b.auto_renewal &&
     a.currency === b.currency &&
@@ -773,12 +782,32 @@ let retainCount = 0;
 let stopTimer: number | null = null;
 let liveStatusTimer: number | null = null;
 let nodeInfoTimer: number | null = null;
+let visibilityTrackingStarted = false;
+
+function handleVisibilityChange() {
+  if (typeof document === "undefined") return;
+  if (!document.hidden && started && retainCount > 0) {
+    if (!hydrated) {
+      bootstrapBackoffTicks = 0;
+      bootstrapSkipTicks = 0;
+      void bootstrap();
+    } else {
+      void refreshLatestStatus();
+      void syncNodeInfo().catch(() => {});
+    }
+  }
+}
 
 function ensureStarted() {
   if (started) return;
   started = true;
 
   ensureScrollTrackingStarted();
+  if (!visibilityTrackingStarted && typeof document !== "undefined") {
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("pageshow", handleVisibilityChange);
+    visibilityTrackingStarted = true;
+  }
   void bootstrap();
   // 实时指标与节点信息使用独立轮询节奏。
   liveStatusTimer = window.setInterval(() => {
@@ -842,6 +871,11 @@ function stopStore() {
   if (scrollTrackingStarted) {
     window.removeEventListener("scroll", markScrollActivity);
     scrollTrackingStarted = false;
+  }
+  if (visibilityTrackingStarted && typeof document !== "undefined") {
+    document.removeEventListener("visibilitychange", handleVisibilityChange);
+    window.removeEventListener("pageshow", handleVisibilityChange);
+    visibilityTrackingStarted = false;
   }
   scrollActive = false;
   refreshDeferredWhileScrolling = false;

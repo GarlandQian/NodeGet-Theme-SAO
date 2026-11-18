@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { HistoryScheduler } from "../nodeget/history";
-import { METADATA_KEYS, nodeFromData } from "../nodeget/normalize";
+import { TRAFFIC_KEYS, nodeFromData } from "../nodeget/normalize";
 import type { RpcCaller } from "../nodeget/rpc";
 import { NodeGetSource } from "../nodeget/source";
 import { readExtensionTrafficPeriod } from "../nodeget/traffic";
@@ -15,7 +15,7 @@ const extension = {
 
 describe("NodeGet extension-traffic integration", () => {
   it("reads published combined bytes, including zero, without fabricating directional counters", () => {
-    expect(METADATA_KEYS).toContain("metadata_traffic_used");
+    expect(TRAFFIC_KEYS).toContain("metadata_traffic_used");
     expect(readExtensionTrafficPeriod({ ...extension, metadata_traffic_used: "0" }, now)).toEqual({
       used: 0, start: extension.metadata_traffic_period_start, partial: false, canReadSnapshots: false,
     });

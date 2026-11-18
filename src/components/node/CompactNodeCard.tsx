@@ -1,7 +1,6 @@
 import { NodeUnavailable } from "./NodeUnavailable";
 import { memo, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
-import { Link } from "react-router-dom";
 import {
   ArrowDown,
   ArrowUp,
@@ -55,6 +54,7 @@ import type {
 } from "@/types/models";
 import type { ByteRateDisplay } from "@/utils/format";
 import type { TrafficDisplay } from "@/utils/traffic";
+import { HomeInstanceLink } from "./HomeInstanceLink";
 
 const TRAFFIC_DOT_COUNT = 16;
 const HEALTH_BAR_COUNT = 18;
@@ -348,27 +348,27 @@ function CompactNodeHeader({
       <div className="compact-node-title-wrap">
         <div className="compact-node-title-row">
           <Flag region={node.region} size={15} />
-          <Link
-            to={`/instance/${encodeURIComponent(node.uuid)}`}
+          <HomeInstanceLink
+            uuid={node.uuid}
             className="compact-node-title"
             title={node.name}
           >
             {node.name}
-          </Link>
+          </HomeInstanceLink>
         </div>
       </div>
       <div className="compact-node-actions">
         {showTodayTraffic && (
           <NodeTodayTrafficPopover uuid={node.uuid} size={14} />
         )}
-        <Link
-          to={`/instance/${encodeURIComponent(node.uuid)}`}
+        <HomeInstanceLink
+          uuid={node.uuid}
           className="compact-node-detail-link"
           title={detailLabels.title}
           aria-label={detailLabels.ariaLabel}
         >
           <OsLogo value={node.os} size={15} />
-        </Link>
+        </HomeInstanceLink>
       </div>
     </header>
   );
@@ -755,6 +755,64 @@ export const CompactNodeCard = memo(function CompactNodeCard({
   const showConnections = themeSettings.isReady && themeSettings.showConnections;
   // 开关关闭或节点离线时,完全跳过格式化工作。
   const uptimeLabel = showUptime && !isOffline ? formatCompactUptime(node.uptime) : "";
+  const isLayered = themeSettings.serverCardTemplate === "layered";
+
+  if (isLayered) {
+    return (
+      <article
+        id={`node-card-${uuid}`}
+        className={clsx("compact-node-card is-layered", isOffline && "is-offline")}
+      >
+        <div className="server-card-layered-top">
+          <CompactNodeHeader
+            node={node}
+            osName={osName}
+            showTodayTraffic={showTodayTraffic}
+          />
+          <CompactNodeChips subtitle={subtitle} tags={footerTags} ipv4={node.ipv4} ipv6={node.ipv6} />
+          <CompactNodeVitals node={node} loadFraction={loadFraction} />
+          <CompactNodeInfoStrip
+            node={node}
+            trafficTrend={trafficTrend}
+            upRate={upRate}
+            downRate={downRate}
+            showTrafficTotal={showTrafficTotal}
+            showBilling={showBilling}
+            showConnections={showConnections}
+            expire={expire}
+            expireColor={expireColor}
+            renewalPrice={compactRenewalPrice}
+            isPriceVisible={isPriceVisible}
+          />
+          <CompactTrafficBar
+            traffic={traffic}
+            uptimeLabel={uptimeLabel}
+            trafficHeatSpectrum={trafficHeatSpectrum}
+          />
+        </div>
+
+        <div className="server-card-layered-bottom">
+          {homepagePingLines.length >= HOMEPAGE_MULTI_PING_MIN_COUNT ? (
+            <MultiPingStatus
+              lines={homepagePingLines}
+              density="compact"
+              className="compact-node-bottom layered-multi-ping"
+            />
+          ) : (
+            <CompactNodeHealth
+              ping={ping}
+              pingBuckets={pingBuckets}
+              latencyColor={latencyColor}
+              lossColor={lossColor}
+              hasRealHomepagePingBinding={hasRealHomepagePingBinding}
+              pingLoading={pingLoading}
+              pingError={pingError}
+            />
+          )}
+        </div>
+      </article>
+    );
+  }
 
   return (
     <article

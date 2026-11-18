@@ -539,8 +539,10 @@ export function calculateCostSummary(
       continue;
     }
 
-    if (node.price_configured === false || node.metadata_status === "forbidden") {
-      details.push({ ...baseDetail, counted: false, note: node.metadata_status === "forbidden" ? "无权读取费用" : "未配置费用" });
+    const costStatus = node.cost_status ?? node.metadata_status;
+    if (node.price_configured === false || costStatus === "forbidden" || costStatus === "unavailable") {
+      const note = costStatus === "forbidden" ? "无权读取费用" : costStatus === "unavailable" ? "费用读取失败" : "未配置费用";
+      details.push({ ...baseDetail, counted: false, note });
       continue;
     }
     const price = Number(node.price) || 0;
@@ -638,11 +640,45 @@ export function calculateCostPremiumBasisAt(
   return detail.counted ? detail.remainingCny : null;
 }
 
-const CNY_MONEY_FORMATTER = new Intl.NumberFormat("zh-CN", {
+export type CostTargetCurrency = "CNY" | "USD" | "EUR";
+
+export const CURRENCY_SYMBOLS: Record<CostTargetCurrency, string> = {
+  CNY: "¥",
+  USD: "$",
+  EUR: "€",
+};
+
+export function resolveCostCurrency(currency: CostTargetCurrency, rates?: Record<string, number>): CostTargetCurrency {
+  return rates && rates[currency]! > 0 && rates.CNY! > 0 ? currency : "CNY";
+}
+
+export function convertCnyToTargetCurrency(
+  amountCny: number,
+  targetCurrency: CostTargetCurrency,
+  rates: Record<string, number>,
+): number {
+  if (targetCurrency === "CNY") return amountCny;
+  const cnyRate = rates["CNY"];
+  const targetRate = rates[targetCurrency];
+  if (!cnyRate || !targetRate || cnyRate <= 0) return amountCny;
+  return (amountCny / cnyRate) * targetRate;
+}
+
+const MONEY_FORMATTER = new Intl.NumberFormat("zh-CN", {
   minimumFractionDigits: 2,
   maximumFractionDigits: 2,
 });
 
+export function formatCurrencyMoney(value: number, currency: CostTargetCurrency = "CNY") {
+  const symbol = CURRENCY_SYMBOLS[currency] || "¥";
+  return `${symbol} ${MONEY_FORMATTER.format(value || 0)}`;
+}
+
+export function formatSignedCurrency(value: number, currency: CostTargetCurrency = "CNY") {
+  const sign = value < 0 ? "-" : "+";
+  return `${sign}${formatCurrencyMoney(Math.abs(value), currency)}`;
+}
+
 export function formatCnyMoney(value: number) {
-  return `¥ ${CNY_MONEY_FORMATTER.format(value || 0)}`;
+  return formatCurrencyMoney(value, "CNY");
 }

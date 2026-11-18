@@ -1,10 +1,11 @@
 import { useCallback, useLayoutEffect, useMemo, useSyncExternalStore } from "react";
 import { useMinuteClock } from "@/hooks/useClock";
-import { useVisibleNodeUuids } from "@/hooks/useNode";
-import { useHiddenNodeUuids } from "@/hooks/useVisibleNodes";
+import { useVisibleNodes } from "@/hooks/useVisibleNodes";
+import { useNodeGetCacheScope } from "@/hooks/useNodeGetCacheScope";
 import { useThemeSettings } from "@/hooks/useThemeSettings";
 import {
   getCachedPublicPingTasks,
+  getNodeGetCacheScope,
   getPingOverview,
   getPingOverviewStats,
   getPublicPingTasks,
@@ -278,7 +279,11 @@ function resolvePingAssignmentKey(
 
 // 限制原生任务查询的等待时间，避免一次刷新长期占住轮询。
 const PING_REQUEST_TIMEOUT_MS = 35_000;
-const PING_CACHE_STORAGE_KEY = "nodeget:sao:homepage-ping:v1";
+function pingCacheStorageKey() {
+  const scope = getNodeGetCacheScope();
+  if (!scope || scope.startsWith("session-") || typeof window === "undefined") return null;
+  return `nodeget:sao:homepage-ping:v2:${window.location.pathname}:${scope}`;
+}
 const PING_CACHE_TTL_MS = 5 * 60_000;
 
 interface PingOverviewCachePayload {
@@ -827,6 +832,7 @@ let activeConsumers = 0;
 // HMR dispose 后置真:阻止 in-flight 请求的 finally 恢复逻辑在旧模块实例上复活轮询。
 let pingPollingDisposed = false;
 const pingListeners = new Map<string, Set<Listener>>();
+const allPingListeners = new Set<Listener>();
 
 function setPingOverviewStatus(
   status: PingOverviewLoadState,
@@ -919,7 +925,9 @@ function readPingOverviewCache(
 ): Omit<PingOverviewCachePayload, "version" | "savedAt" | "assignmentKey"> | null {
   if (!assignmentKey || typeof window === "undefined") return null;
   try {
-    const raw = window.sessionStorage.getItem(PING_CACHE_STORAGE_KEY);
+    const key = pingCacheStorageKey();
+    if (!key) return null;
+    const raw = window.localStorage.getItem(key);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as unknown;
     if (!isRecord(parsed)) return null;
@@ -1019,7 +1027,8 @@ function persistPingOverviewCache(result: PingOverviewMapResult) {
       intervalMs: result.intervalMs,
       ...persistable,
     };
-    window.sessionStorage.setItem(PING_CACHE_STORAGE_KEY, JSON.stringify(payload));
+    const key = pingCacheStorageKey();
+    if (key) window.localStorage.setItem(key, JSON.stringify(payload));
   } catch {
     // 隐私模式或存储配额不足时继续使用内存数据。
   }
@@ -1167,6 +1176,7 @@ function commitPingOverview(
 
   setPingOverviewStatus(nextStatus, nextIsRefreshing);
 
+  for (const listener of allPingListeners) listener();
   for (const key of touched) {
     const listeners = pingListeners.get(key);
     if (!listeners) continue;
@@ -1182,6 +1192,7 @@ async function refreshPingOverview() {
     pingOverviewStatus.status === "ready" &&
     (pingOverviewState.singleItems.size > 0 || pingOverviewState.multiLines.size > 0);
   setPingOverviewStatus(hasCachedOverview ? "ready" : "loading", true);
+  const requestScope = getNodeGetCacheScope();
   const visibleKey = scheduledVisibleKey;
   const selectionKey = scheduledSelectionKey;
   const controller = new AbortController();
@@ -1191,6 +1202,7 @@ async function refreshPingOverview() {
   // 且 visible/binding 分配在执行期间没有被改掉）。
   const isCurrent = () =>
     !signal.aborted &&
+    requestScope === getNodeGetCacheScope() &&
     visibleKey === scheduledVisibleKey &&
     selectionKey === scheduledSelectionKey;
 
@@ -1284,7 +1296,7 @@ function ensurePingOverviewStarted(
   multiTaskIds: number[],
 ) {
   const normalizedVisibleUuids = normalizeVisibleUuids(visibleUuids);
-  const visibleKey = normalizedVisibleUuids.join("|");
+  const visibleKey = `${getNodeGetCacheScope()}:${normalizedVisibleUuids.join("|")}`;
   const selectionKey = `${stringifyBindings(bindings)}|multi:${multiTaskIds.join(",")}`;
 
   if (
@@ -1359,19 +1371,10 @@ function getPingLinesSnapshot(uuid: string) {
 }
 
 export function useHomepagePingOverview(viewMode: NodeViewMode) {
-  const visibleUuids = useVisibleNodeUuids();
+  const visibleNodes = useVisibleNodes();
+  const effectiveUuids = useMemo(() => visibleNodes.map(node => node.uuid), [visibleNodes]);
+  const scope = useNodeGetCacheScope();
   const themeSettings = useThemeSettings();
-
-  // 主题级隐藏节点首页已不渲染,这里也从 overview 拉取里剔除——否则仍会为其绑定的
-  // ping 任务发请求、做聚合,纯属无效网络/计算开销。
-  const hiddenUuids = useHiddenNodeUuids();
-  const effectiveUuids = useMemo(
-    () =>
-      hiddenUuids.size > 0
-        ? visibleUuids.filter((uuid) => !hiddenUuids.has(uuid))
-        : visibleUuids,
-    [visibleUuids, hiddenUuids],
-  );
   const requestMode = resolveHomepagePingRequestMode(
     viewMode,
     themeSettings.enableHomepageMultiPing,
@@ -1401,12 +1404,23 @@ export function useHomepagePingOverview(viewMode: NodeViewMode) {
       }
     };
   }, [
+    scope,
     effectiveUuids,
     requestMode,
     requestedBindings,
     requestedMultiTaskIds,
     themeSettings.isReady,
   ]);
+}
+
+function subscribeAllPing(listener: Listener) {
+  allPingListeners.add(listener);
+  return () => { allPingListeners.delete(listener); };
+}
+const getAllPing = () => pingOverviewState;
+
+export function useAllPingOverview() {
+  return useSyncExternalStore(subscribeAllPing, getAllPing, getAllPing);
 }
 
 export function useNodePingOverview(

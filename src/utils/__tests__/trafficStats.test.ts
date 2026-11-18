@@ -4,6 +4,7 @@ import {
   RATE_DOWN_METRIC,
   RATE_UP_METRIC,
   summarizeTodayTrafficMetrics,
+  summarizeHourlyTraffic,
   TRAFFIC_DOWN_METRIC,
   TRAFFIC_UP_METRIC,
   type TrafficMetricSeries,
@@ -53,6 +54,14 @@ describe("today traffic stats", () => {
       hasSamples: true,
     });
     expect(stats[1]).toMatchObject({ uuid: "node-b", hasSamples: false, sampleCount: 0 });
+  });
+
+  it("distinguishes an observed zero hour from one without native snapshots", () => {
+    const series = [TRAFFIC_UP_METRIC, TRAFFIC_DOWN_METRIC].map(key =>
+      metricSeries(key, [["2026-07-16T00:05:00Z", 0]]));
+    expect(summarizeHourlyTraffic([], ["node-a"], true)).toMatchObject({ available: false });
+    expect(summarizeHourlyTraffic(series, ["node-a"], false)).toMatchObject({ available: true, total: 0, partial: false });
+    expect(summarizeHourlyTraffic(series, ["node-a", "node-b"], true)).toMatchObject({ available: true, partial: true });
   });
 
   it("does not assign a pseudo peak timestamp when every rate sample is zero", () => {

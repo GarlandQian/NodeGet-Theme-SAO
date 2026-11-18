@@ -1,6 +1,5 @@
 import { NodeUnavailable } from "./NodeUnavailable";
 import { memo, useCallback, useState } from "react";
-import { Link } from "react-router-dom";
 import { ArrowDown, ArrowUp, CircleDollarSign } from "lucide-react";
 import { clsx } from "clsx";
 import { Flag } from "@/components/ui/Flag";
@@ -8,6 +7,7 @@ import { OsLogo } from "@/components/ui/OsLogo";
 import { useNodeCardModel } from "@/hooks/useNodeCardModel";
 import { usePreferences } from "@/hooks/usePreferences";
 import { useMetricColorsVersion } from "@/hooks/useMetricColors";
+import { useThemeSettings } from "@/hooks/useThemeSettings";
 import { formatBytes } from "@/utils/format";
 import { speedRateColor } from "@/utils/metricTone";
 import { CanvasStrip, fillRoundedRect, safeCanvasColor } from "./CanvasStrip";
@@ -18,6 +18,7 @@ import { formatHealthBucketTooltip } from "./pingBucketText";
 import type { PingDataIssue, PingOverviewTaskLoadState } from "@/types/models";
 import { PingDataNotice } from "./PingDataNotice";
 import { pingIssueLabel } from "@/utils/pingStatus";
+import { HomeInstanceLink } from "./HomeInstanceLink";
 
 const GAUGE_SEGMENTS = 14;
 // 列表网络列的延迟柱数:比卡片(24)少,配窄列宽,柱子仍清晰可读。
@@ -305,9 +306,9 @@ const NodeRow = memo(function NodeRow({ uuid }: { uuid: string }) {
   ].join("，");
 
   return (
-    <Link
+    <HomeInstanceLink
       id={`node-card-${uuid}`}
-      to={`/instance/${encodeURIComponent(uuid)}`}
+      uuid={uuid}
       className={clsx("node-list-row", isOffline && "is-offline")}
       title={detailLabels.title}
       aria-label={rowLabel}
@@ -415,29 +416,34 @@ const NodeRow = memo(function NodeRow({ uuid }: { uuid: string }) {
         <StackLine value={uptime.value} unit={uptime.unit} color="var(--progress-cpu)" />
         <StackLine value={expire.value} unit={expire.unit} color={expireColor} />
       </div>
-    </Link>
+    </HomeInstanceLink>
   );
 });
 
 export function NodeListView({ uuids }: { uuids: string[] }) {
+  const { serverCardTemplate } = useThemeSettings();
+  const isLayered = serverCardTemplate === "layered";
+
   return (
-    <div className="node-list-scroll">
-      <div className="node-list">
-        <div className="node-list-row node-list-head" aria-hidden>
-          <div className="node-list-cell node-list-node">服务器</div>
-          <div className="node-list-cell col-os">系统</div>
-          <div className="node-list-cell col-metric">CPU</div>
-          <div className="node-list-cell col-metric">内存</div>
-          <div className="node-list-cell col-metric">磁盘</div>
-          <div className="node-list-cell col-load">负载</div>
-          <div className="node-list-cell col-live">实时</div>
-          <div className="node-list-cell col-traffic">流量</div>
-          <div className="node-list-cell col-net">网络</div>
-          <div className="node-list-cell col-life">在线 / 到期</div>
+    <div className={clsx("node-list-container", isLayered && "is-layered")}>
+      <div className={clsx("node-list-scroll", isLayered && "is-layered")}>
+        <div className={clsx("node-list", isLayered && "is-layered")}>
+          <div className="node-list-row node-list-head" aria-hidden>
+            <div className="node-list-cell node-list-node">服务器</div>
+            <div className="node-list-cell col-os">系统</div>
+            <div className="node-list-cell col-metric">CPU</div>
+            <div className="node-list-cell col-metric">内存</div>
+            <div className="node-list-cell col-metric">磁盘</div>
+            <div className="node-list-cell col-load">负载</div>
+            <div className="node-list-cell col-live">实时</div>
+            <div className="node-list-cell col-traffic">流量</div>
+            <div className="node-list-cell col-net">网络</div>
+            <div className="node-list-cell col-life">在线 / 到期</div>
+          </div>
+          {uuids.map((uuid) => (
+            <NodeRow key={uuid} uuid={uuid} />
+          ))}
         </div>
-        {uuids.map((uuid) => (
-          <NodeRow key={uuid} uuid={uuid} />
-        ))}
       </div>
     </div>
   );

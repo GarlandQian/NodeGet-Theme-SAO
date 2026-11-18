@@ -20,6 +20,9 @@ export function useThemeSettings(): ThemeSettingsState {
     // 配置层已合并本地偏好；加载失败时不恢复旧站点的费用公开状态。
     const base = normalizeThemeSettings(config?.theme_settings);
     let overrideClusterMode: "classic" | "nodes" | undefined;
+    let overridePalette: "default" | "eva" | "divergence" | undefined;
+    let overrideVisualMode: "adaptive" | "visual" | "text" | undefined;
+    let overrideMicroVisual: "dynamic" | "static" | undefined;
     if (typeof window !== "undefined") {
       const searchParams = new URLSearchParams(window.location.search);
       const clusterParam = searchParams.get("cluster");
@@ -29,10 +32,28 @@ export function useThemeSettings(): ThemeSettingsState {
       } else if (clusterParam === "classic") {
         overrideClusterMode = "classic";
       }
+
+      const paletteParam = searchParams.get("palette");
+      if (paletteParam === "divergence" || paletteParam === "eva" || paletteParam === "default") {
+        overridePalette = paletteParam;
+      }
+
+      const visualModeParam = searchParams.get("visualMode");
+      if (visualModeParam === "adaptive" || visualModeParam === "visual" || visualModeParam === "text") {
+        overrideVisualMode = visualModeParam;
+      }
+
+      const microVisualParam = searchParams.get("microVisual");
+      if (microVisualParam === "dynamic" || microVisualParam === "static") {
+        overrideMicroVisual = microVisualParam;
+      }
     }
     return {
       ...base,
       ...(overrideClusterMode ? { clusterOverviewMode: overrideClusterMode } : {}),
+      ...(overridePalette ? { matrixColorTheme: overridePalette } : {}),
+      ...(overrideVisualMode ? { overviewCardVisualMode: overrideVisualMode } : {}),
+      ...(overrideMicroVisual ? { overviewMicroVisualMode: overrideMicroVisual } : {}),
       isReady,
       isLoading: isLoading && !hasConfig,
       isError,

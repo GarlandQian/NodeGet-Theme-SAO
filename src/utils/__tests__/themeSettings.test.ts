@@ -19,6 +19,12 @@ describe("normalizeThemeSettings", () => {
     );
   });
 
+  it("normalizes overviewMicroVisualMode defaulting to dynamic and accepting static", () => {
+    expect(normalizeThemeSettings({}).overviewMicroVisualMode).toBe("dynamic");
+    expect(normalizeThemeSettings({ overviewMicroVisualMode: "static" }).overviewMicroVisualMode).toBe("static");
+    expect(normalizeThemeSettings({ overviewMicroVisualMode: "unknown" as never }).overviewMicroVisualMode).toBe("dynamic");
+  });
+
   it("defaults overview ratings on unless explicitly disabled", () => {
     const defaults = normalizeThemeSettings({});
     expect(defaults.showOverviewRatings).toBe(true);
@@ -28,7 +34,7 @@ describe("normalizeThemeSettings", () => {
     expect(normalizeThemeSettings({ showBandwidthRating: false }).showBandwidthRating).toBe(false);
   });
 
-  it("normalizes homepage multi-ping tasks while preserving an enabled draft for repair", () => {
+  it("normalizes an enabled multi-ping configuration with real task IDs", () => {
     expect(normalizeThemeSettings({}).enableHomepageMultiPing).toBe(false);
     expect(
       normalizeThemeSettings({
@@ -43,6 +49,14 @@ describe("normalizeThemeSettings", () => {
     });
     expect(resolved.enableHomepageMultiPing).toBe(true);
     expect(resolved.homepageMultiPingTaskIds).toEqual([3, 1, 2, 4]);
+  });
+
+  it("migrates independent Ping slots and resumes discovery when no task is configured", () => {
+    const legacy = { enableHomepageMultiPing: true, homepageMultiPingTaskIds: [] };
+    expect(normalizeThemeSettings({ ...legacy, homepageIndependentDefaultTaskIds: [17, 12, 17] }))
+      .toMatchObject({ enableHomepageMultiPing: true, homepageMultiPingTaskIds: [17, 12] });
+    expect(normalizeThemeSettings(legacy))
+      .toMatchObject({ enableHomepageMultiPing: false, homepageMultiPingTaskIds: [] });
   });
 
   it("defaults home sort to weight ascending and falls back to a field's natural direction", () => {
@@ -84,6 +98,13 @@ describe("normalizeThemeSettings", () => {
     expect(normalizeThemeSettings({ clusterOverviewMode: "traffic" as never }).clusterOverviewMode).toBe("classic");
     expect(normalizeThemeSettings({ clusterOverviewMode: "carousel" as never }).clusterOverviewMode).toBe("nodes");
     expect(normalizeThemeSettings({ clusterOverviewMode: "invalid" as never }).clusterOverviewMode).toBe("classic");
+  });
+
+  it("normalizes serverCardTemplate correctly across classic and layered options", () => {
+    expect(normalizeThemeSettings({ serverCardTemplate: "classic" }).serverCardTemplate).toBe("classic");
+    expect(normalizeThemeSettings({ serverCardTemplate: "layered" }).serverCardTemplate).toBe("layered");
+    expect(normalizeThemeSettings({ serverCardTemplate: "invalid" as never }).serverCardTemplate).toBe("layered");
+    expect(normalizeThemeSettings({}).serverCardTemplate).toBe("layered");
   });
 
   it("normalizes matrixColorTheme correctly", () => {
@@ -255,12 +276,12 @@ describe("normalizeThemeSettings", () => {
   it("normalizes overviewCards with exact 6 slots, fallback fill, and deduplication", () => {
     const defaults = normalizeThemeSettings({});
     expect(defaults.overviewCards).toEqual([
-      "connections",
-      "cpu",
-      "ram",
-      "disk",
-      "traffic",
       "asset",
+      "loss",
+      "cpu",
+      "bandwidth",
+      "traffic",
+      "yesterdayBest",
     ]);
     expect(defaults.overviewCards.length).toBe(6);
 

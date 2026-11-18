@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { mergeNodeStatus, resolveTrafficTotal } from "@/services/wsStore";
+import { mergeNodeStatus, resolveTrafficTotal, shallowEqualNodeInfo } from "@/services/wsStore";
+import { NodeInfoSchema } from "@/types/models";
 import type { NodeMetrics, NodeStatus } from "@/types/models";
 
 const previous: NodeMetrics = {
@@ -22,6 +23,15 @@ describe("resolveTrafficTotal", () => {
 });
 
 describe("NodeGet display status merging", () => {
+  it("refreshes node metadata when a zero price is configured or field access changes", () => {
+    const before = NodeInfoSchema.parse({ uuid: "n", price: 0, price_configured: false,
+      metadata_status: "ready", cost_status: "forbidden", static_status: "unavailable" });
+    for (const change of [{ price_configured: true }, { metadata_status: "forbidden" },
+      { cost_status: "ready" }, { static_status: "ready" }]) {
+      expect(shallowEqualNodeInfo(before, { ...before, ...change })).toBe(false);
+    }
+    expect(shallowEqualNodeInfo(before, { ...before, updated_at: "later" })).toBe(true);
+  });
   it("uses the display snapshot directly while preserving missing counters and accepting real zero", () => {
     const merged = mergeNodeStatus(previous, {
       online: true, dataStatus: "ready", metrics: {

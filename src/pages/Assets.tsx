@@ -12,10 +12,15 @@ import { useVisibleNodes } from "@/hooks/useVisibleNodes";
 import { usePriceVisibility } from "@/hooks/usePriceVisibility";
 import {
   calculateCostSummary,
+  convertCnyToTargetCurrency,
+  CURRENCY_SYMBOLS,
+  resolveCostCurrency,
   formatCnyMoney,
-  formatSignedCny,
+  formatCurrencyMoney,
+  formatSignedCurrency,
   getExchangeRates,
   readCachedExchangeRates,
+  type CostTargetCurrency,
 } from "@/utils/cost";
 import { formatBillingCycle } from "@/utils/billing";
 import { getExpireDaysRemaining, LONG_TERM_EXPIRE_DAYS } from "@/utils/format";
@@ -102,15 +107,16 @@ function assetsRenewalLabel(daysRemaining: number) {
   return daysRemaining < 0 ? "已过期" : "即将到期";
 }
 
-// "¥ 1,234.56" → 货币符号 / 整数位 / 小数位三段,按报表数字惯例分级排印。
-function HeroMoney({ value }: { value: number | null }) {
+// "¥ 1,234.56" 或 "$ 1,234.56" → 货币符号 / 整数位 / 小数位三段,按报表数字惯例分级排印。
+function HeroMoney({ value, currency = "CNY" }: { value: number | null; currency?: CostTargetCurrency }) {
   if (value == null) {
     return <span className="assets-hero-value is-pending">计算中</span>;
   }
-  const [int, frac = "00"] = formatCnyMoney(value).replace("¥", "").trim().split(".");
+  const symbol = CURRENCY_SYMBOLS[currency] || "¥";
+  const [int, frac = "00"] = formatCurrencyMoney(value, currency).replace(symbol, "").trim().split(".");
   return (
     <span className="assets-hero-value">
-      <span className="assets-hero-currency">¥</span>
+      <span className="assets-hero-currency">{symbol}</span>
       {int}
       <span className="assets-hero-frac">.{frac}</span>
     </span>
@@ -214,6 +220,15 @@ export function Assets() {
 
   const hasCostData = summary?.details.some((detail) => detail.counted || detail.note === "免费") ?? false;
   const missingCostCount = summary?.details.filter(detail => !detail.counted && detail.note !== "免费" && detail.note !== "已忽略").length ?? 0;
+  const rates = rateQuery.data?.rates;
+  const targetCurrency = resolveCostCurrency(themeSettings.costCurrency, rates);
+  const currencySymbol = CURRENCY_SYMBOLS[targetCurrency];
+
+  const toTarget = (amountCny: number) => {
+    if (!rates) return amountCny;
+    return convertCnyToTargetCurrency(amountCny, targetCurrency, rates);
+  };
+
   const hasPremium = summary?.details.some((detail) => detail.premiumCny !== 0) ?? false;
   const ledgerRows: Array<{
     label: string;
@@ -221,13 +236,13 @@ export function Assets() {
     tone?: string;
     title?: string;
   }> = [
-    { label: "年化总支出", value: summary && hasCostData ? formatCnyMoney(summary.totalCny) : "--" },
-    { label: "月均支出", value: summary && hasCostData ? formatCnyMoney(summary.monthlyCny) : "--" },
+    { label: "年化总支出", value: summary && hasCostData ? formatCurrencyMoney(toTarget(summary.totalCny), targetCurrency) : "--" },
+    { label: "月均支出", value: summary && hasCostData ? formatCurrencyMoney(toTarget(summary.monthlyCny), targetCurrency) : "--" },
     ...(summary != null && hasPremium
       ? [
           {
             label: "溢价盈亏",
-            value: formatSignedCny(summary.premiumTotalCny),
+            value: formatSignedCurrency(toTarget(summary.premiumTotalCny), targetCurrency),
             tone: premiumTone(summary.premiumTotalCny),
             title:
               "所有节点「收购溢价」的加总（正数=溢价多花钱，负数=折价少花钱），只反映溢价本身的赚亏，不叠加到剩余价值/年化/月均里",
@@ -238,7 +253,7 @@ export function Assets() {
       ? [
           {
             label: "真实月均",
-            value: formatCnyMoney(summary.effectiveMonthlyCny),
+            value: formatCurrencyMoney(toTarget(summary.effectiveMonthlyCny), targetCurrency),
             title:
               "月均支出 + 溢价月摊（各节点溢价 ÷ 收购日至到期日的月数，无到期按已持有月数；仅计入填写了收购日期的节点），仅作参考，不改变月均支出口径",
           },
@@ -248,7 +263,7 @@ export function Assets() {
       ? [
           {
             label: "实际剩余价值",
-            value: formatCnyMoney(summary.actualRemainingCny),
+            value: formatCurrencyMoney(toTarget(summary.actualRemainingCny), targetCurrency),
             title: "剩余价值 + 尚未摊销的溢价；固定期限节点的溢价随到期临近衰减，到期后归零",
           },
         ]
@@ -290,13 +305,13 @@ export function Assets() {
         <>
           <section className="assets-hero" aria-label="资产汇总">
             <span className="assets-hero-mark" aria-hidden>
-              ¥
+              {currencySymbol}
             </span>
             <div className="assets-hero-main">
               <span className="assets-eyebrow" title="按各节点账单价格折算的剩余价值，不含收购溢价">
                 剩余价值
               </span>
-              {hasCostData ? <HeroMoney value={summary ? summary.remainingCny : null} /> : <span className="assets-hero-value">暂无费用数据</span>}
+              {hasCostData ? <HeroMoney value={summary ? toTarget(summary.remainingCny) : null} currency={targetCurrency} /> : <span className="assets-hero-value">暂无费用数据</span>}
             </div>
             <dl className="assets-ledger">
               {ledgerRows.map((row) => (
@@ -308,6 +323,9 @@ export function Assets() {
             </dl>
           </section>
 
+          {rates && targetCurrency !== themeSettings.costCurrency && (
+            <p role="status">汇率源未提供 {themeSettings.costCurrency} 汇率，金额暂以人民币显示。</p>
+          )}
           {missingCostCount > 0 && <p role="status" className="text-[12px] text-(--text-secondary)">{missingCostCount} 台节点的费用数据不完整或无读取权限，未计入汇总；具体原因见明细。</p>}
 
           <div className="assets-section-head">
@@ -404,18 +422,18 @@ export function Assets() {
                         </td>
                         <td data-numeric>
                           {detail.counted ? (
-                            `${formatCnyMoney(detail.priceCny)}/${formatBillingCycle(detail.billingCycleDays)}`
+                            `${formatCurrencyMoney(toTarget(detail.priceCny), targetCurrency)}/${formatBillingCycle(detail.billingCycleDays)}`
                           ) : (
                             <span className="assets-note-chip">{detail.note}</span>
                           )}
                         </td>
                         <td data-numeric data-strong>
-                          {detail.counted ? formatCnyMoney(detail.remainingCny) : "—"}
+                          {detail.counted ? formatCurrencyMoney(toTarget(detail.remainingCny), targetCurrency) : "—"}
                         </td>
                         <td data-numeric>
                           {detail.premiumCny !== 0 ? (
                             <span style={{ color: premiumTone(detail.premiumCny) }}>
-                              {formatSignedCny(detail.premiumCny)}
+                              {formatSignedCurrency(toTarget(detail.premiumCny), targetCurrency)}
                             </span>
                           ) : (
                             "—"
@@ -426,7 +444,7 @@ export function Assets() {
                             <span
                               title={`摊销 ${Math.round(detail.amortMonths)} 个月（收购日 → 到期日；无到期按已持有）`}
                             >
-                              {formatSignedCny(detail.premiumMonthlyCny)}/月
+                              {formatSignedCurrency(toTarget(detail.premiumMonthlyCny), targetCurrency)}/月
                             </span>
                           ) : (
                             "—"
@@ -464,7 +482,7 @@ export function Assets() {
                     : undefined;
                   const priceLabel =
                     detail.note ||
-                    `${formatCnyMoney(detail.priceCny)}/${formatBillingCycle(detail.billingCycleDays)}`;
+                    `${formatCurrencyMoney(toTarget(detail.priceCny), targetCurrency)}/${formatBillingCycle(detail.billingCycleDays)}`;
                   return (
                     <div
                       key={detail.uuid}
@@ -482,7 +500,7 @@ export function Assets() {
                           <span className="cost-summary-detail-title">{detail.name}</span>
                         </Link>
                         <strong title="剩余价值">
-                          {detail.counted ? formatCnyMoney(detail.remainingCny) : "—"}
+                          {detail.counted ? formatCurrencyMoney(toTarget(detail.remainingCny), targetCurrency) : "—"}
                         </strong>
                       </div>
                       <div className="cost-summary-detail-meta">
@@ -495,7 +513,7 @@ export function Assets() {
                             }
                             title="收购溢价（正数=多花钱溢价买入，负数=折价买入）"
                           >
-                            {formatSignedCny(detail.premiumCny)} 溢价
+                            {formatSignedCurrency(toTarget(detail.premiumCny), targetCurrency)} 溢价
                           </span>
                         )}
                         {detail.premiumCny !== 0 && detail.amortMonths != null && (
@@ -503,7 +521,7 @@ export function Assets() {
                             className="cost-summary-premium-chip"
                             title="溢价月摊 = 收购溢价 ÷ 摊销月数（收购日 → 到期日；无到期按已持有）"
                           >
-                            月摊 {formatSignedCny(detail.premiumMonthlyCny)} · 摊 {Math.round(detail.amortMonths)} 月
+                            月摊 {formatSignedCurrency(toTarget(detail.premiumMonthlyCny), targetCurrency)} · 摊 {Math.round(detail.amortMonths)} 月
                           </span>
                         )}
                         <span

@@ -10,7 +10,6 @@ import {
   type ReactNode,
 } from "react";
 import {
-  keepPreviousData,
   queryOptions,
   useQueries,
   useQuery,
@@ -21,10 +20,13 @@ import {
   getTodayTrafficRefreshInterval,
   selectActiveTodayTrafficUuids,
 } from "@/hooks/todayTrafficQueryPolicy";
-import { getTodayTrafficMetrics } from "@/services/api";
+import { useNodeGetCacheScope } from "@/hooks/useNodeGetCacheScope";
+import { getNodeGetCacheScope, getTodayTrafficMetrics } from "@/services/api";
 import {
   buildTodayTrafficMetricSamples,
   summarizeTodayTrafficMetrics,
+  summarizeHourlyTraffic,
+  type HourlyTrafficBucket,
   type TodayTrafficSample,
   type TodayTrafficStat,
 } from "@/utils/trafficStats";
@@ -170,9 +172,10 @@ export function TodayTrafficStatsProvider({
     () => selectActiveTodayTrafficUuids(uuids, activeUuids),
     [activeUuids, uuids],
   );
+  const scope = useNodeGetCacheScope();
   const nodeQueries = useQueries({
     queries: queryUuids.map((uuid) =>
-      getTodayTrafficQueryOptions([uuid], now, "summary"),
+      getTodayTrafficQueryOptions([uuid], now, "summary", true, scope),
     ),
   });
   const nodeQueryStates = useMemo(() => {
@@ -270,14 +273,14 @@ function getTodayTrafficQueryOptions(
   uuids: string[],
   now: number,
   mode: TodayTrafficQueryMode,
-  includeRates = true,
+  includeRates: boolean,
+  scope: string,
 ) {
   const stableUuids = [...new Set(uuids)].sort();
   const startMs = localDayStartMs(now);
-  const uuidSignature = stableUuids.join(",");
 
   return queryOptions({
-    queryKey: ["traffic-stats", "today", startMs, mode, includeRates, uuidSignature],
+    queryKey: ["traffic-stats", "today", startMs, mode, includeRates, stableUuids, scope],
     queryFn: async ({ signal }): Promise<TodayTrafficStatsResponse> => {
       const endMs = Date.now();
       const data = await getTodayTrafficMetrics(stableUuids, startMs, endMs, {
@@ -304,8 +307,7 @@ function getTodayTrafficQueryOptions(
         intervalSeconds: data.intervalSeconds,
       };
     },
-    enabled: stableUuids.length > 0,
-    placeholderData: keepPreviousData,
+    enabled: Boolean(scope) && stableUuids.length > 0,
     staleTime: 60_000,
     refetchInterval: (query) =>
       getTodayTrafficRefreshInterval(
@@ -323,7 +325,40 @@ export function useTodayTrafficStats(
   mode: TodayTrafficQueryMode = "full",
   includeRates = true,
 ) {
-  return useQuery(getTodayTrafficQueryOptions(uuids, now, mode, includeRates));
+  const scope = useNodeGetCacheScope();
+  return useQuery(getTodayTrafficQueryOptions(uuids, now, mode, includeRates, scope));
+}
+
+/** 今日总量和逐小时流量使用不同的快照区间，首页可分别加载。 */
+export function useHourlyTrafficBuckets(uuids: string[], now: number, enabled: boolean) {
+  const scope = useNodeGetCacheScope();
+  const selected = [...new Set(uuids)].sort();
+  const hour = 3_600_000;
+  const currentHour = new Date(now);
+  currentHour.setMinutes(0, 0, 0);
+  const queries = Array.from({ length: 7 }, (_, index) => {
+    const current = index === 6;
+    const start = currentHour.getTime() - (6 - index) * hour;
+    return queryOptions({
+      queryKey: ["traffic-stats", "hour", scope, selected, start, current],
+      enabled: enabled && Boolean(scope) && selected.length > 0,
+      queryFn: async ({ signal }): Promise<HourlyTrafficBucket> => {
+        const end = Math.min(Date.now(), start + hour);
+        if (end <= start) return { up: 0, down: 0, total: 0, available: false };
+        const data = await getTodayTrafficMetrics(selected, start, end, {
+          signal, includeRates: false, timeout: TRAFFIC_REQUEST_TIMEOUT_MS,
+        });
+        return summarizeHourlyTraffic(data.series, selected, Object.keys(data.issues ?? {}).length > 0);
+      },
+      staleTime: current ? 60_000 : 30 * 60_000,
+      gcTime: 7 * hour,
+      refetchInterval: current ? 5 * 60_000 : false as const,
+      retry: false,
+    });
+  });
+  const data = useQueries({ queries }).map(query =>
+    query.data ?? { up: 0, down: 0, total: 0, available: false });
+  return { data: enabled && data.some(bucket => bucket.available) ? data : [] };
 }
 
 export function preloadTodayTrafficStats(
@@ -331,6 +366,7 @@ export function preloadTodayTrafficStats(
   uuids: string[],
   now = Date.now(),
 ) {
-  if (uuids.length === 0) return Promise.resolve();
-  return queryClient.prefetchQuery(getTodayTrafficQueryOptions(uuids, now, "full"));
+  const scope = getNodeGetCacheScope();
+  if (!uuids.length || !scope) return Promise.resolve();
+  return queryClient.prefetchQuery(getTodayTrafficQueryOptions(uuids, now, "full", true, scope));
 }

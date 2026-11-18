@@ -7,6 +7,8 @@ import type {
   ThemeSettings,
   TrafficSpectrumColors,
   UserMatrixPreset,
+  YesterdayBestScope,
+  YesterdayBestDisplayMode,
 } from "@/types/models";
 import {
   DEFAULT_COST_RATE_API_URL,
@@ -32,6 +34,11 @@ import {
 
 export type Appearance = "system" | "light" | "dark";
 export type NodeViewMode = "large" | "compact" | "mini" | "list";
+export type ServerCardTemplate = "classic" | "layered";
+export const SERVER_CARD_TEMPLATES: readonly ServerCardTemplate[] = [
+  "classic",
+  "layered",
+] as const;
 export type ClusterOverviewMode = "classic" | "nodes";
 export type MatrixColorTheme =
   | "default"
@@ -43,6 +50,24 @@ export const MATRIX_COLOR_THEMES: readonly MatrixColorTheme[] = [
   "eva",
   "divergence",
 ] as const;
+
+export type OverviewCardVisualMode = "adaptive" | "visual" | "text";
+
+export const OVERVIEW_CARD_VISUAL_MODES = ["adaptive", "visual", "text"] as const;
+
+export type OverviewMicroVisualMode = "dynamic" | "static";
+
+export const OVERVIEW_MICRO_VISUAL_MODES = ["dynamic", "static"] as const;
+
+export function normalizeOverviewMicroVisualMode(val: unknown): OverviewMicroVisualMode {
+  return val === "static" ? "static" : "dynamic";
+}
+
+export function normalizeOverviewStaticCards(val: unknown): OverviewCardId[] {
+  if (!Array.isArray(val)) return ["yesterdayBest"];
+  const valid = new Set<OverviewCardId>(ALL_OVERVIEW_CARD_IDS);
+  return val.filter((item): item is OverviewCardId => typeof item === "string" && valid.has(item as OverviewCardId));
+}
 
 export type MatrixBootEffect =
   | "laser-scan"
@@ -163,25 +188,28 @@ export const TRAFFIC_SPECTRUM_PRESETS: readonly StatusBarPreset[] = STATUS_BAR_P
 export const OVERVIEW_CARD_SLOT_COUNT = 6;
 
 export const DEFAULT_OVERVIEW_CARDS: readonly OverviewCardId[] = [
-  "connections",
-  "cpu",
-  "ram",
-  "disk",
-  "traffic",
   "asset",
+  "loss",
+  "cpu",
+  "bandwidth",
+  "traffic",
+  "yesterdayBest",
 ] as const;
 
 export const ALL_OVERVIEW_CARD_IDS: readonly OverviewCardId[] = [
-  "connections",
-  "cpu",
-  "ram",
-  "disk",
-  "traffic",
   "asset",
-  "nodes",
+  "loss",
+  "cpu",
   "bandwidth",
+  "traffic",
+  "yesterdayBest",
+  "nodes",
+  "connections",
+  "ram",
   "swap",
+  "uptime",
   "process",
+  "disk",
   "cores",
 ] as const;
 
@@ -228,9 +256,11 @@ export function normalizeOverviewCards(raw: unknown): OverviewCardId[] {
 }
 
 export interface ResolvedThemeSettings {
+  [key: string]: unknown;
   defaultAppearance: Appearance;
   desktopNodeViewMode: NodeViewMode;
   mobileNodeViewMode: NodeViewMode;
+  serverCardTemplate: ServerCardTemplate;
   clusterOverviewMode: ClusterOverviewMode;
   matrixColorTheme: MatrixColorTheme;
   matrixMockFill: boolean;
@@ -252,6 +282,12 @@ export interface ResolvedThemeSettings {
   overviewCards: OverviewCardId[];
   overviewCardOrder: OverviewCardId[];
   overviewCardDisabled: OverviewCardId[];
+  /** 首页指标小卡视觉展现模式：智能切换(adaptive)、图形卡片(visual)、文字卡片(text) */
+  overviewCardVisualMode: OverviewCardVisualMode;
+  /** 首页易闲置指标卡（平均CPU/今日流量/活跃连接）微图呈现模式：动态真实数据(dynamic)、静态美化微图(static) */
+  overviewMicroVisualMode: OverviewMicroVisualMode;
+  /** 单卡片独立静态微图呈现列表：包含在此数组中的卡片强制呈现静态美化微图，未包含的默认保持动态 */
+  overviewStaticCards: OverviewCardId[];
   showGroupTabs: boolean;
   showRegionBar: boolean;
   showCardGroup: boolean;
@@ -274,14 +310,20 @@ export interface ResolvedThemeSettings {
   showTodayTrafficPopover: boolean;
   hiddenNodes: string[];
   costIgnoredNodes: string[];
+  carrierLossIncludedNodes: string[];
+  yesterdayBestIncludedNodes: string[];
+  yesterdayBestScope: YesterdayBestScope;
+  yesterdayBestDisplayMode: YesterdayBestDisplayMode;
   costPremiums: Record<string, CostPremiumEntry>;
   costRateApiUrl: string;
+  costCurrency: "CNY" | "USD" | "EUR";
 }
 
 export const DEFAULT_THEME_SETTINGS: ResolvedThemeSettings = {
-  defaultAppearance: "dark",
+  defaultAppearance: "system",
   desktopNodeViewMode: "large",
   mobileNodeViewMode: "compact",
+  serverCardTemplate: "layered",
   clusterOverviewMode: "classic",
   matrixColorTheme: "eva",
   matrixMockFill: false,
@@ -302,6 +344,9 @@ export const DEFAULT_THEME_SETTINGS: ResolvedThemeSettings = {
   overviewCards: [...DEFAULT_OVERVIEW_CARDS],
   overviewCardOrder: [...DEFAULT_OVERVIEW_CARDS],
   overviewCardDisabled: [],
+  overviewCardVisualMode: "visual",
+  overviewMicroVisualMode: "dynamic",
+  overviewStaticCards: ["yesterdayBest"],
   showGroupTabs: true,
   showRegionBar: true,
   showCardGroup: true,
@@ -324,8 +369,13 @@ export const DEFAULT_THEME_SETTINGS: ResolvedThemeSettings = {
   showTodayTrafficPopover: true,
   hiddenNodes: [],
   costIgnoredNodes: [],
+  carrierLossIncludedNodes: [],
+  yesterdayBestIncludedNodes: [],
+  yesterdayBestScope: "tri",
+  yesterdayBestDisplayMode: "best",
   costPremiums: {},
   costRateApiUrl: DEFAULT_COST_RATE_API_URL,
+  costCurrency: "CNY",
 };
 
 export function isAppearance(value: unknown): value is Appearance {
@@ -362,6 +412,17 @@ function normalizeMobileNodeViewMode(
   return mode === "list" ? fallback : mode;
 }
 
+export function isServerCardTemplate(value: unknown): value is ServerCardTemplate {
+  return value === "classic" || value === "layered";
+}
+
+export function normalizeServerCardTemplate(
+  value: unknown,
+  fallback: ServerCardTemplate = DEFAULT_THEME_SETTINGS.serverCardTemplate,
+): ServerCardTemplate {
+  return isServerCardTemplate(value) ? value : fallback;
+}
+
 export function isClusterOverviewMode(value: unknown): value is ClusterOverviewMode {
   return value === "classic" || value === "nodes";
 }
@@ -384,6 +445,12 @@ function normalizeMatrixColorTheme(
   fallback: MatrixColorTheme = DEFAULT_THEME_SETTINGS.matrixColorTheme,
 ): MatrixColorTheme {
   return isMatrixColorTheme(value) ? value : fallback;
+}
+
+function normalizeOverviewCardVisualMode(value: unknown): OverviewCardVisualMode {
+  return typeof value === "string" && (OVERVIEW_CARD_VISUAL_MODES as readonly string[]).includes(value)
+    ? (value as OverviewCardVisualMode)
+    : "visual";
 }
 
 function normalizeMatrixMockFill(value: unknown): boolean {
@@ -539,12 +606,38 @@ export function normalizeTrafficSpectrumColors(val: unknown): TrafficSpectrumCol
   };
 }
 
+export function normalizeCostCurrency(
+  value: unknown,
+): "CNY" | "USD" | "EUR" {
+  if (value === "USD" || value === "EUR") return value;
+  return "CNY";
+}
+
+export function normalizeYesterdayBestScope(raw: unknown): YesterdayBestScope {
+  if (raw === "ct" || raw === "cu" || raw === "cm" || raw === "all" || raw === "tri") {
+    return raw;
+  }
+  return "tri";
+}
+
+export function normalizeYesterdayBestDisplayMode(raw: unknown): YesterdayBestDisplayMode {
+  if (raw === "average" || raw === "best") {
+    return raw;
+  }
+  return "best";
+}
+
 export function normalizeThemeSettings(
   settings: (ThemeSettings & Record<string, unknown>) | null | undefined,
 ): ResolvedThemeSettings {
-  const homepageMultiPingTaskIds = normalizeHomepageMultiPingTaskIds(
-    settings?.homepageMultiPingTaskIds,
+  const rawMultiIds = normalizeHomepageMultiPingTaskIds(settings?.homepageMultiPingTaskIds);
+  const fallbackIndependentIds = normalizeHomepageMultiPingTaskIds(
+    settings?.homepageIndependentDefaultTaskIds,
   );
+  const homepageMultiPingTaskIds =
+    rawMultiIds.length > 0
+      ? rawMultiIds
+      : fallbackIndependentIds;
   return {
     defaultAppearance: normalizeAppearance(settings?.defaultAppearance),
     desktopNodeViewMode: normalizeNodeViewMode(
@@ -555,6 +648,10 @@ export function normalizeThemeSettings(
       settings?.mobileNodeViewMode,
       DEFAULT_THEME_SETTINGS.mobileNodeViewMode,
     ),
+    serverCardTemplate: normalizeServerCardTemplate(
+      settings?.serverCardTemplate,
+      DEFAULT_THEME_SETTINGS.serverCardTemplate,
+    ),
     clusterOverviewMode: normalizeClusterOverviewMode(settings?.clusterOverviewMode),
     matrixColorTheme: normalizeMatrixColorTheme(settings?.matrixColorTheme),
     matrixMockFill: normalizeMatrixMockFill(settings?.matrixMockFill),
@@ -564,8 +661,8 @@ export function normalizeThemeSettings(
     matrixUserPresets: normalizeMatrixUserPresets(settings?.matrixUserPresets),
     showPingChart: enabledUnlessFalse(settings?.showPingChart),
     homepagePingBindings: normalizeHomepagePingTaskBindings(settings?.homepagePingBindings),
-    // 保留开关原值，让管理页能呈现并修复不完整配置；首页消费方仅在任务恰好为三项时启用。
-    enableHomepageMultiPing: settings?.enableHomepageMultiPing === true,
+    // 未配置真实任务时恢复自动发现，避免空线路草稿阻止其他设置保存。
+    enableHomepageMultiPing: settings?.enableHomepageMultiPing === true && homepageMultiPingTaskIds.length > 0,
     homepageMultiPingTaskIds,
     pingLatencyThresholds: normalizePingLatencyThresholds(settings?.pingLatencyThresholds),
     pingLatencyColors: normalizePingLatencyColors(settings?.pingLatencyColors),
@@ -576,6 +673,9 @@ export function normalizeThemeSettings(
     overviewCards: normalizeOverviewCards(settings?.overviewCards ?? settings?.overviewCardOrder),
     overviewCardOrder: normalizeOverviewCards(settings?.overviewCards ?? settings?.overviewCardOrder),
     overviewCardDisabled: [],
+    overviewCardVisualMode: normalizeOverviewCardVisualMode(settings?.overviewCardVisualMode),
+    overviewMicroVisualMode: normalizeOverviewMicroVisualMode(settings?.overviewMicroVisualMode),
+    overviewStaticCards: normalizeOverviewStaticCards(settings?.overviewStaticCards),
     showGroupTabs: enabledUnlessFalse(settings?.showGroupTabs),
     showRegionBar: enabledUnlessFalse(settings?.showRegionBar),
     showCardGroup: enabledUnlessFalse(settings?.showCardGroup),
@@ -600,7 +700,12 @@ export function normalizeThemeSettings(
     showTodayTrafficPopover: enabledUnlessFalse(settings?.showTodayTrafficPopover),
     hiddenNodes: normalizeNodeIdentityList(settings?.hiddenNodes),
     costIgnoredNodes: normalizeCostIgnoredNodes(settings?.costIgnoredNodes),
+    carrierLossIncludedNodes: normalizeNodeIdentityList(settings?.carrierLossIncludedNodes),
+    yesterdayBestIncludedNodes: normalizeNodeIdentityList(settings?.yesterdayBestIncludedNodes),
+    yesterdayBestScope: normalizeYesterdayBestScope(settings?.yesterdayBestScope),
+    yesterdayBestDisplayMode: normalizeYesterdayBestDisplayMode(settings?.yesterdayBestDisplayMode),
     costPremiums: normalizeCostPremiums(settings?.costPremiums),
     costRateApiUrl: normalizeCostRateApiUrl(settings?.costRateApiUrl),
+    costCurrency: normalizeCostCurrency(settings?.costCurrency),
   };
 }

@@ -2,7 +2,7 @@ import type { LoadRecord, NodeInfo, NodeStatus } from "@/types/models";
 import { isAccessDeniedError } from "@/services/requestErrors";
 import { HistoryScheduler, queryCompleteWindow } from "./history";
 import {
-  COST_KEYS, DYNAMIC_FIELDS, METADATA_KEYS, globalUuid, metricsFromData, metadataByUuid,
+  COST_KEYS, DYNAMIC_FIELDS, METADATA_KEYS, TRAFFIC_KEYS, globalUuid, metricsFromData, metadataByUuid,
   nodeFromData, number, row, rows, text, timestamp, withTrafficDeltas, type Row,
 } from "./normalize";
 import { PingReader } from "./ping";
@@ -21,11 +21,12 @@ export class NodeGetSource {
   readonly traffic: TrafficReader;
   nodes: NodeInfo[] = [];
   private uuids: string[] = [];
-  private readonly metadata = new Map<string, Row>();
+  private metadata = new Map<string, Row>();
   private dynamics = new Map<string, Row>();
   private dynamicUpdatedAt = 0;
   private nodesUpdatedAt = 0;
-  private metadataStatus = "unavailable";
+  private trafficMetadata = new Map<string, Row>();
+  private trafficMetadataStatus = "unavailable";
   private nodesPending: Promise<NodeInfo[]> | null = null;
   private dynamicsPending: Promise<Map<string, Row>> | null = null;
   private discoveryPending: Promise<void> | null = null;
@@ -73,35 +74,38 @@ export class NodeGetSource {
         this.setStatus("connected");
         return [];
       }
-      const namespace_key = this.uuids.flatMap(uuid => [...METADATA_KEYS, ...(this.costsVisible ? COST_KEYS : [])]
-        .map(key => ({ namespace: uuid, key })));
-      const [staticResult, metadataResult, dynamicResult, expiryResult] = await Promise.allSettled([
+      // 主控会因任一未授权字段拒绝整批请求，各用途独立查询。
+      const readMetadata = (keys: string[]) => this.rpc.call("kv_get_multi_value", {
+        namespace_key: this.uuids.flatMap(namespace => keys.map(key => ({ namespace, key }))),
+      }).then(metadataByUuid);
+      const [staticResult, metadataResult, dynamicResult, trafficResult, expiryResult, costResult] = await Promise.allSettled([
         this.rpc.call("agent_static_data_multi_last_query", { uuids: this.uuids, fields: ["cpu", "system"] }),
-        this.rpc.call("kv_get_multi_value", { namespace_key }),
+        readMetadata(METADATA_KEYS),
         this.loadDynamics(),
-        // KV 批次里任一字段无权限会整批失败，到期读取不能影响监控元数据。
-        this.rpc.call("kv_get_multi_value", {
-          namespace_key: this.uuids.map(namespace => ({ namespace, key: "metadata_expire_time" })),
-        }).then(metadataByUuid),
+        readMetadata(TRAFFIC_KEYS),
+        readMetadata(["metadata_expire_time"]),
+        this.costsVisible ? readMetadata(COST_KEYS) : Promise.resolve(new Map<string, Row>()),
       ]);
       const statics = staticResult.status === "fulfilled" ? new Map(rows(staticResult.value).map(item => [text(item.uuid), item])) : new Map<string, Row>();
-      const expiryMetadata = expiryResult.status === "fulfilled" ? expiryResult.value : new Map<string, Row>();
-      if (metadataResult.status === "fulfilled") {
-        const data = metadataByUuid(metadataResult.value);
-        this.metadata.clear();
-        for (const [uuid, item] of data) this.metadata.set(uuid, item);
-      }
       const statusOf = (result: PromiseSettledResult<unknown>) => result.status === "fulfilled" ? "ready" : isAccessDeniedError(result.reason) ? "forbidden" : "unavailable";
-      this.metadataStatus = statusOf(metadataResult);
+      const metadataStatus = statusOf(metadataResult);
+      if (metadataResult.status === "fulfilled") this.metadata = metadataResult.value;
+      else if (metadataStatus === "forbidden") this.metadata.clear();
+      this.trafficMetadataStatus = statusOf(trafficResult);
+      if (trafficResult.status === "fulfilled") this.trafficMetadata = trafficResult.value;
+      else if (this.trafficMetadataStatus === "forbidden") this.trafficMetadata.clear();
       const oldNodes = new Map(this.nodes.map(node => [text(node.native_uuid), node]));
       this.nodes = this.uuids.map(uuid => {
         const node = nodeFromData(this.id, this.name, uuid, {
           ...this.metadata.get(uuid),
-          metadata_expire_time: expiryMetadata.get(uuid)?.metadata_expire_time,
+          ...this.trafficMetadata.get(uuid),
+          ...(costResult.status === "fulfilled" ? costResult.value.get(uuid) : {}),
+          metadata_expire_time: expiryResult.status === "fulfilled" ? expiryResult.value.get(uuid)?.metadata_expire_time : undefined,
         }, statics.get(uuid) ?? {}, this.dynamics.get(uuid) ?? {}, {
-          metadata: statusOf(metadataResult), static: statusOf(staticResult), costs: this.costsVisible,
+          metadata: metadataStatus, static: statusOf(staticResult), costs: this.costsVisible, costStatus: this.costsVisible ? statusOf(costResult) : undefined,
         });
-        if (staticResult.status === "rejected") {
+        if (metadataStatus !== "ready" && oldNodes.get(uuid)?.hidden) node.hidden = true;
+        if (staticResult.status === "rejected" && !isAccessDeniedError(staticResult.reason)) {
           const old = oldNodes.get(uuid);
           if (old) for (const key of ["cpu_name", "cpu_cores", "arch", "os", "kernel_version", "virtualization"] as const) Object.assign(node, { [key]: old[key] });
         }
@@ -157,15 +161,16 @@ export class NodeGetSource {
           missingFields, metrics: null,
         }];
         const current = this.traffic.readCurrent(uuid);
-        const metadata = this.metadata.get(uuid) ?? {};
+        const metadata = this.trafficMetadata.get(uuid) ?? {};
         const extension = readExtensionTrafficPeriod(metadata, now);
         const periodStart = extension?.start ?? timestamp(metadata.metadata_traffic_period_start);
         const period = !extension || extension.canReadSnapshots ? this.traffic.readPeriod(uuid, periodStart) : undefined;
         const cycleUsed = extension?.used;
         const cycleAvailable = cycleUsed !== undefined || period !== undefined;
-        const cyclePartial = this.metadataStatus !== "ready" || (cycleUsed !== undefined ? extension!.partial : period?.partial);
-        const cycleReason = cycleAvailable && this.metadataStatus !== "ready"
+        const cyclePartial = this.trafficMetadataStatus !== "ready" || (cycleUsed !== undefined ? extension!.partial : period?.partial);
+        const cycleReason = cycleAvailable && this.trafficMetadataStatus !== "ready"
           ? "流量配置读取失败，显示上次周期用量"
+          : this.trafficMetadataStatus === "forbidden" ? "无权读取周期流量配置"
           : period ? undefined : extension?.reason;
         const metrics = metricsFromData(dynamic);
         if (current && current.updatedAt >= time - 120_000) {

@@ -35,6 +35,18 @@ interface PingOverviewResponse {
 
 let sources = new Map<string, NodeGetSource>();
 let configSignature = "";
+let cacheScope = "";
+let scopeGeneration = 0;
+
+export function getNodeGetCacheScope(): string { return cacheScope; }
+
+async function createCacheScope(signature: string): Promise<string> {
+  // Only a digest may enter persistent cache keys. HTTP deployments without
+  // Web Crypto share in-memory results within the current page only.
+  if (!globalThis.crypto?.subtle) return `session-${++scopeGeneration}`;
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(signature));
+  return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
+}
 let initialization: Promise<void> | null = null;
 let scheduler = new HistoryScheduler();
 let sourceStatuses: SourceStatus[] = [];
@@ -61,18 +73,20 @@ async function ensureSources(options: RequestOptions = {}): Promise<Map<string, 
   if (signature !== configSignature) {
     if (initialization) await initialization;
     if (signature !== configSignature) {
-      const operation = Promise.resolve().then(() => {
+      const operation = Promise.resolve().then(async () => {
         const entries = config.site_tokens.map(entry => {
           const url = normalizeBackendUrl(entry.backend_url);
           return { entry, url, id: sourceIdentity(url, entry.id) };
         });
         if (new Set(entries.map(item => item.id)).size !== entries.length) throw new Error("重复主控地址需要配置不同的 id");
+        const nextCacheScope = await createCacheScope(signature);
         for (const source of sources.values()) source.close();
         scheduler.close();
         scheduler = new HistoryScheduler();
         sources = new Map();
         sourceStatuses = [];
         configSignature = signature;
+        cacheScope = nextCacheScope;
         for (const { id, url, entry } of entries) {
           const name = entry.name?.trim() || new URL(url).hostname;
           publish({ id, name, status: "loading" });
@@ -93,6 +107,7 @@ export function closeNodeGetConnections() {
   sources.clear();
   sourceStatuses = [];
   configSignature = "";
+  cacheScope = "";
   for (const listener of sourceListeners) listener();
 }
 
@@ -290,6 +305,28 @@ export function getPingOverview(hours = 1, taskId?: number, options?: PingOvervi
     ...request, entityIds: options?.entityIds, onProgress: options?.onProgress,
   }));
 }
+export function getNodePingWindowStats(entityIds: readonly string[], hours: number, options?: RequestOptions) {
+  return bounded(options, async request => {
+    const available = await ensureSources(request);
+    const selected = [...new Set(entityIds)];
+    const { rangeStartMs, rangeEndMs } = range(hours);
+    const issues: Record<string, DataIssue> = {};
+    const groups = await Promise.all(selected.map(async client => {
+      try {
+        const { source, uuid } = resolveNode(client, available);
+        const data = await source.ping.query(uuid, rangeStartMs, rangeEndMs, { ...request, priority: "background" });
+        if (data.partial) issues[client] = { status: "partial", message: "部分 Ping 类型无法读取" };
+        return data.stats;
+      } catch (error) {
+        aborted(request.signal);
+        issues[client] = issue(error);
+        return [];
+      }
+    }));
+    return { stats: groups.flat(), issues };
+  });
+}
+
 export function getPingOverviewStats(hours: number, taskIds: number[], options?: RequestOptions & { entityIds?: string[] }): Promise<PingTaskStats[]> {
   if (!taskIds.length) return Promise.resolve([]);
   return bounded(options, async request => (await queryOverview(hours, [...new Set(taskIds)], { ...request, entityIds: options?.entityIds })).stats ?? []);

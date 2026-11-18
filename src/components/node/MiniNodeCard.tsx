@@ -1,6 +1,5 @@
 import { NodeUnavailable } from "./NodeUnavailable";
 import { memo, useState, type CSSProperties, type ReactNode } from "react";
-import { Link } from "react-router-dom";
 import {
   ArrowDown,
   ArrowUp,
@@ -19,6 +18,7 @@ import { IpStackBadges } from "./IpStackBadges";
 import { NodeTodayTrafficPopover } from "./NodeTodayTrafficPopover";
 import { HealthBucketTooltip } from "./HealthBucketTooltip";
 import { useNodeCardModel } from "@/hooks/useNodeCardModel";
+import { useThemeSettings } from "@/hooks/useThemeSettings";
 import { speedRateColor } from "@/utils/metricTone";
 import { supportsFineHover } from "@/utils/mediaQuery";
 import {
@@ -31,6 +31,7 @@ import { formatHealthBucketTooltip } from "./pingBucketText";
 import { PingDataNotice } from "./PingDataNotice";
 import { formatBytes, type ByteRateDisplay } from "@/utils/format";
 import type { NodeInfo, NodeMetrics, PingOverviewItem, PingOverviewBucket } from "@/types/models";
+import { HomeInstanceLink } from "./HomeInstanceLink";
 
 // 迷你卡固定为巡检布局，不跟随紧凑卡的可选指标开关；数据仍走共享模型。
 const HEALTH_BAR_COUNT = 24;
@@ -48,22 +49,21 @@ function MiniHeader({
   showTodayTraffic: boolean;
 }) {
   const detailLabels = nodeDetailLinkLabels(node.name, osName);
-  const detailHref = `/instance/${encodeURIComponent(node.uuid)}`;
   return (
     <header className="mini-node-header">
       <Flag region={node.region} size={14} />
-      <Link to={detailHref} className="mini-node-title" title={node.name}>
+      <HomeInstanceLink uuid={node.uuid} className="mini-node-title" title={node.name}>
         {node.name}
-      </Link>
+      </HomeInstanceLink>
       {showTodayTraffic && <NodeTodayTrafficPopover uuid={node.uuid} size={13} />}
-      <Link
-        to={detailHref}
+      <HomeInstanceLink
+        uuid={node.uuid}
         className="mini-node-os"
         title={detailLabels.title}
         aria-label={detailLabels.ariaLabel}
       >
         <OsLogo value={node.os} size={14} />
-      </Link>
+      </HomeInstanceLink>
     </header>
   );
 }
@@ -408,6 +408,7 @@ export const MiniNodeCard = memo(function MiniNodeCard({
   const model = useNodeCardModel(uuid, {
     pingBucketCount: HEALTH_BAR_COUNT,
   });
+  const themeSettings = useThemeSettings();
 
   if (!model.node) {
     return <article className="mini-node-card animate-pulse" aria-busy />;
@@ -434,6 +435,38 @@ export const MiniNodeCard = memo(function MiniNodeCard({
     isOffline,
     osName,
   } = model;
+  const isLayered = themeSettings.serverCardTemplate === "layered";
+
+  if (isLayered) {
+    return (
+      <article
+        id={`node-card-${uuid}`}
+        className={clsx("mini-node-card is-layered", isOffline && "is-offline")}
+      >
+        <div className="server-card-layered-top">
+          <MiniHeader
+            node={node}
+            osName={osName}
+            showTodayTraffic={showTodayTraffic}
+          />
+          <MiniChips tags={footerTags} renewalPrice={renewalPrice} ipv4={node.ipv4} ipv6={node.ipv6} />
+          <MiniVitals node={node} loadFraction={loadFraction} />
+          <MiniFlow node={node} upRate={upRate} downRate={downRate} />
+        </div>
+        <div className="server-card-layered-bottom">
+          <MiniHealth
+            ping={ping}
+            pingBuckets={pingBuckets}
+            latencyColor={latencyColor}
+            lossColor={lossColor}
+            hasRealHomepagePingBinding={hasRealHomepagePingBinding}
+            pingLoading={pingLoading}
+            pingError={pingError}
+          />
+        </div>
+      </article>
+    );
+  }
 
   return (
     <article

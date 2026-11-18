@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Outlet, useLocation } from "react-router-dom";
+import { Outlet, ScrollRestoration, useLocation } from "react-router-dom";
 import { WifiOff, RotateCw } from "lucide-react";
 import { Spinner } from "@/components/ui/Spinner";
 import { useAppearance } from "@/hooks/useAppearance";
@@ -96,6 +96,7 @@ export function AppShell() {
           )}
         </div>
       </main>
+      <ScrollRestoration />
     </div>
   );
 }

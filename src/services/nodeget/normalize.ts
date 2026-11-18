@@ -10,6 +10,8 @@ export const DYNAMIC_FIELDS = [
 export const METADATA_KEYS = [
   "metadata_name", "metadata_region", "metadata_provider", "metadata_city", "metadata_country", "metadata_asn",
   "metadata_public_remark", "metadata_tags", "metadata_hidden", "metadata_order", "metadata_group",
+];
+export const TRAFFIC_KEYS = [
   "metadata_traffic_limit", "metadata_traffic_limit_type", "metadata_billing_mode", "metadata_traffic_period",
   "metadata_traffic_period_start", "metadata_traffic_used",
 ];
@@ -78,7 +80,7 @@ export function metadataByUuid(payload: unknown): Map<string, Row> {
 
 export function nodeFromData(
   sourceId: string, sourceName: string, uuid: string, metadata: Row, staticData: Row, dynamic: Row,
-  statuses: { metadata: string; static: string; costs: boolean },
+  statuses: { metadata: string; static: string; costs: boolean; costStatus?: string },
 ): NodeInfo {
   const cpu = row(staticData.cpu);
   const system = row(staticData.system);
@@ -111,7 +113,7 @@ export function nodeFromData(
     expired_at: expires.getTime() > 0 ? expires.toISOString() : "",
     traffic_limit: trafficLimit, traffic_limit_type: extension ? "sum" : text(metadata.metadata_traffic_limit_type, "sum"),
     ...(extension ? { traffic_billing_mode: billingMode, traffic_period: period } : {}),
-    metadata_status: statuses.metadata, static_status: statuses.static,
+    metadata_status: statuses.metadata, static_status: statuses.static, cost_status: statuses.costStatus,
   });
 }
 

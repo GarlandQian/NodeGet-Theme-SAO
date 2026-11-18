@@ -14,5 +14,6 @@ export function usePublicConfig() {
     queryFn: ({ signal }) => getPublic({ signal }),
     staleTime: 60_000,
     refetchOnWindowFocus: true,
+    gcTime: Number.POSITIVE_INFINITY,
   });
 }

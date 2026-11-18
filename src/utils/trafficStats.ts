@@ -131,3 +131,21 @@ export function hasTrafficData(stat: TodayTrafficStat | undefined | null): boole
 export function hasRateData(stat: TodayTrafficStat | undefined | null): boolean {
   return Boolean(stat?.hasSamples && stat.ratesAvailable !== false);
 }
+
+export interface HourlyTrafficBucket {
+  up: number;
+  down: number;
+  total: number;
+  available?: boolean;
+  partial?: boolean;
+}
+
+/** 聚合单个自然小时的原生快照区间合计，读不到快照的节点不计为零。 */
+export function summarizeHourlyTraffic(
+  series: TrafficMetricSeries[], uuids: string[], hasIssues: boolean,
+): HourlyTrafficBucket {
+  const stats = summarizeTodayTrafficMetrics(series, uuids).filter(stat => stat.hasSamples);
+  const up = stats.reduce((sum, stat) => sum + stat.trafficUp, 0);
+  const down = stats.reduce((sum, stat) => sum + stat.trafficDown, 0);
+  return { up, down, total: up + down, available: stats.length > 0, partial: hasIssues || stats.length < uuids.length };
+}

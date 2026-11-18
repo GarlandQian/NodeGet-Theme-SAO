@@ -165,6 +165,28 @@ describe("NodeGet public API", () => {
     expect(nodes.every(node => node.name === "Shared name" && node.metadata_status === "ready")).toBe(true);
     expect(nodes.every(node => node.expired_at === "")).toBe(true);
   });
+  it.each(["metadata_price", "metadata_traffic_used"])(
+    "isolates denied %s from a node's public identity and visibility",
+    async deniedKey => {
+      const successful = state.call.getMockImplementation()!;
+      state.config.user_preferences = { theme_settings: { showPriceForGuests: true } };
+      state.call.mockImplementation(async (url, method, params) => {
+        if (method !== "kv_get_multi_value") return successful(url, method, params);
+        const pairs = params.namespace_key as Array<{ namespace: string; key: string }>;
+        if (pairs.some(pair => pair.key === deniedKey)) throw new NodeGetRpcError(102, method);
+        const values: Record<string, unknown> = { metadata_name: "Private node", metadata_group: "Infra",
+          metadata_hidden: true, metadata_price: 0, metadata_traffic_limit: 500 };
+        return pairs.filter(pair => pair.key in values).map(pair => ({ ...pair, value: values[pair.key] }));
+      });
+      const nodes = await api.getNodes();
+      expect(nodes).toHaveLength(2);
+      for (const node of nodes) expect(node).toMatchObject({
+        name: "Private node", group: "Infra", hidden: true, metadata_status: "ready", price: 0,
+        price_configured: deniedKey !== "metadata_price", cost_status: deniedKey === "metadata_price" ? "forbidden" : "ready",
+        traffic_limit: deniedKey === "metadata_traffic_used" ? 0 : 500,
+      });
+    },
+  );
   it("discovers native Ping without bindings and isolates a source without task permission", async () => {
     const successful = state.call.getMockImplementation()!;
     state.call.mockImplementation((url, method, params) => {
