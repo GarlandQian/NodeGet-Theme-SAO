@@ -1,5 +1,5 @@
 import { hasTrafficData } from "@/utils/trafficStats";
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState, useLayoutEffect, type CSSProperties } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
@@ -20,22 +20,22 @@ import { useHomepagePingOverview, useAllPingOverview } from "@/hooks/usePingOver
 import { calculateCarrierLoss, type CarrierLossSummary } from "@/utils/carrierLoss";
 import { calculateYesterdayAverageScore, type YesterdayLeaderboardItem } from "@/utils/yesterdayBestNode";
 import { useStabilityLeaderboard } from "@/hooks/useStabilityLeaderboard";
-import { sortNodesByWeight } from "@/pages/ThemeManage/components/CarrierLossConfigModal";
-import { YesterdayBestLeaderboardModal } from "./YesterdayBestLeaderboardModal";
 import { isHomepageMultiPingConfigured } from "@/utils/pingTasks";
 import { usePublicConfig } from "@/hooks/usePublicConfig";
 import { useThemeSettings } from "@/hooks/useThemeSettings";
 import { useViewMode } from "@/hooks/useViewMode";
 import { usePriceVisibility } from "@/hooks/usePriceVisibility";
-import { calculateCostSummary, getExchangeRates, readCachedExchangeRates } from "@/utils/cost";
+import { calculateCostSummary, getExchangeRates, readExchangeRateInitialData } from "@/utils/cost";
 import { useHiddenNodeUuids } from "@/hooks/useVisibleNodes";
 import {
+  aggregateOverviewMetrics,
   getHomeGroupLabel,
   getHomeGroupOptions,
   getHomeRegionOptions,
   HOME_ALL_GROUP,
   HOME_ALL_REGION,
   sortHomeGroupOptions,
+  sortNodesByWeight,
   type HomeRegionOption,
 } from "@/utils/homeNodes";
 import { getDisplayRegionCode } from "@/utils/geo";
@@ -43,6 +43,7 @@ import { useHomeSort } from "@/hooks/useHomeSort";
 import { useHomeNodeOrder } from "@/hooks/useHomeNodeOrder";
 import { useHourlyClock, useMinuteClock } from "@/hooks/useClock";
 import { preloadAssetsPage } from "@/services/assetsPageLoader";
+import { preloadTrafficPage } from "@/services/trafficPageLoader";
 import {
   preloadTodayTrafficStats,
   TodayTrafficStatsProvider,
@@ -71,6 +72,12 @@ import type { OverviewCardId, OverviewCardVisualMode, OverviewMicroVisualMode } 
 import { getNodeMetricsSnapshot, type HomeNodeSummary } from "@/services/wsStore";
 import { getRenewalReminders, type RenewalReminderSource } from "@/utils/renewalReminder";
 import { DiaTextReveal } from "@/components/ui/DiaTextReveal";
+
+const YesterdayBestLeaderboardModal = lazy(() =>
+  import("./YesterdayBestLeaderboardModal").then((m) => ({
+    default: m.YesterdayBestLeaderboardModal,
+  })),
+);
 
 const EMPTY_LEADERBOARD: YesterdayLeaderboardItem[] = [];
 
@@ -288,6 +295,7 @@ const HomeOverviewCards = memo(function HomeOverviewCards({
   exchangeRates?: Record<string, number>;
 }) {
   const { isPriceVisible } = usePriceVisibility();
+  const renewalClock = useHourlyClock();
   const onlinePct =
     overview.totalNodes > 0 ? (overview.onlineNodes / overview.totalNodes) * 100 : 0;
   const bandwidthRating =
@@ -302,10 +310,13 @@ const HomeOverviewCards = memo(function HomeOverviewCards({
   const unknownNodes = overview.totalNodes - overview.onlineNodes - overview.offlineNodes;
   const isAllHealthy = overview.onlineNodes === overview.totalNodes && overview.totalNodes > 0;
 
-  const renewalReminders = getRenewalReminders(renewalNodes, Date.now(), {
-    requireOnlineForExpired: true,
-  });
-  const renewalCount = renewalReminders.length;
+  const renewalCount = useMemo(
+    () =>
+      getRenewalReminders(renewalNodes, renewalClock, {
+        requireOnlineForExpired: true,
+      }).length,
+    [renewalClock, renewalNodes],
+  );
   const greetingInfo = getTimeGreetingInfo(
     overview.totalNodes,
     overview.onlineNodes,
@@ -337,6 +348,7 @@ const HomeOverviewCards = memo(function HomeOverviewCards({
         showTrafficDetailButton={showTrafficDetailButton}
         showDetailButton={showDetailButton}
         renewalNodes={renewalNodes}
+        renewalCount={renewalCount}
         onWarmTraffic={onWarmTraffic}
         onOpenLeaderboard={onOpenLeaderboard}
         isActive={touchActiveCardId === cardId}
@@ -923,6 +935,7 @@ export function NodeGrid() {
     [visibleMeta],
   );
   const warmTrafficPage = useCallback(() => {
+    preloadTrafficPage();
     void preloadTodayTrafficStats(queryClient, trafficUuids, Date.now());
   }, [queryClient, trafficUuids]);
   const todayTrafficClock = useMinuteClock();
@@ -950,15 +963,18 @@ export function NodeGrid() {
   );
 
   const carrierLoss = useMemo(() => {
-    let visibleUuids = visibleMeta.map((m) => m.uuid);
     const included = themeSettings.carrierLossIncludedNodes;
+    let visibleUuids: string[];
     if (included && included.length > 0) {
       const includedSet = new Set(included);
-      visibleUuids = visibleUuids.filter((uuid) => {
-        const meta = visibleMeta.find((m) => m.uuid === uuid);
-        const name = meta?.name?.trim() || "";
-        return includedSet.has(uuid) || (name && includedSet.has(name));
-      });
+      visibleUuids = visibleMeta
+        .filter((meta) => {
+          const name = meta.name?.trim() || "";
+          return includedSet.has(meta.uuid) || (name !== "" && includedSet.has(name));
+        })
+        .map((meta) => meta.uuid);
+    } else {
+      visibleUuids = visibleMeta.map((m) => m.uuid);
     }
     return calculateCarrierLoss(
       allPing.multiLines,
@@ -986,17 +1002,17 @@ export function NodeGrid() {
 
   // 计算当前有效候选节点
   const yesterdayCandidateUuids = useMemo(() => {
-    let candidateUuids = sortedVisibleMeta.map((m) => m.uuid);
     const included = themeSettings.yesterdayBestIncludedNodes;
     if (included && included.length > 0) {
       const includedSet = new Set(included);
-      candidateUuids = candidateUuids.filter((uuid) => {
-        const meta = sortedVisibleMeta.find((m) => m.uuid === uuid);
-        const name = meta?.name?.trim() || "";
-        return includedSet.has(uuid) || (name && includedSet.has(name));
-      });
+      return sortedVisibleMeta
+        .filter((meta) => {
+          const name = meta.name?.trim() || "";
+          return includedSet.has(meta.uuid) || (name !== "" && includedSet.has(name));
+        })
+        .map((meta) => meta.uuid);
     }
-    return candidateUuids;
+    return sortedVisibleMeta.map((m) => m.uuid);
   }, [sortedVisibleMeta, themeSettings.yesterdayBestIncludedNodes]);
 
   const yesterdayScope = themeSettings.yesterdayBestScope;
@@ -1062,108 +1078,12 @@ export function NodeGrid() {
   ]);
 
   const overview = useMemo<HomeOverview>(() => {
-    let onlineNodes = 0;
-    let offlineNodes = 0;
-    let trafficUp = 0;
-    let trafficDown = 0;
-    let netUp = 0;
-    let netDown = 0;
-    let totalCpu = 0;
-    let totalRamUsed = 0;
-    let totalRamTotal = 0;
-    let totalSwapUsed = 0;
-    let totalSwapTotal = 0;
-    let totalDiskUsed = 0;
-    let totalDiskTotal = 0;
-    let totalTcpConn = 0;
-    let totalUdpConn = 0;
-    let totalProcesses = 0;
-    let totalLoad1 = 0;
-    let totalLoad5 = 0;
-    let totalLoad15 = 0;
-    let totalCores = 0;
-
-    for (const node of visibleNodes) {
-      if (node.online === true) {
-        onlineNodes += 1;
-        totalCpu += node.cpuPct || 0;
-        totalRamUsed += node.ramUsed || 0;
-        totalSwapUsed += node.swapUsed || 0;
-        totalDiskUsed += node.diskUsed || 0;
-        totalTcpConn += node.connectionsTcp || 0;
-        totalUdpConn += node.connectionsUdp || 0;
-        totalProcesses += node.process || 0;
-        totalLoad1 += node.load1 || 0;
-        totalLoad5 += node.load5 || 0;
-        totalLoad15 += node.load15 || 0;
-      } else if (node.online === false) {
-        offlineNodes += 1;
-      }
-      totalRamTotal += node.ramTotal || 0;
-      totalSwapTotal += node.swapTotal || 0;
-      totalDiskTotal += node.diskTotal || 0;
-      trafficUp += node.trafficUp;
-      trafficDown += node.trafficDown;
-      if (node.online === true) {
-        netUp += node.netUp;
-        netDown += node.netDown;
-      }
-    }
-
-    let minUptimeSeconds = Number.POSITIVE_INFINITY;
-    let recentRebootNode: { name: string; seconds: number } | null = null;
-
-    for (const meta of visibleMeta) {
-      totalCores += meta.cpu_cores || 0;
-      const metrics = getNodeMetricsSnapshot(meta.uuid);
-      if (metrics && metrics.online === true && Number.isFinite(metrics.uptime) && metrics.uptime >= 0) {
-        if (metrics.uptime < minUptimeSeconds) {
-          minUptimeSeconds = metrics.uptime;
-          recentRebootNode = {
-            name: meta.name?.trim() || meta.uuid,
-            seconds: metrics.uptime,
-          };
-        }
-      }
-    }
-
-    const avgCpu = onlineNodes > 0 ? totalCpu / onlineNodes : 0;
-    const avgLoad1 = onlineNodes > 0 ? totalLoad1 / onlineNodes : 0;
-    const avgLoad5 = onlineNodes > 0 ? totalLoad5 / onlineNodes : 0;
-    const avgLoad15 = onlineNodes > 0 ? totalLoad15 / onlineNodes : 0;
-    const ramPct = totalRamTotal > 0 ? (totalRamUsed / totalRamTotal) * 100 : 0;
-    const swapPct = totalSwapTotal > 0 ? (totalSwapUsed / totalSwapTotal) * 100 : 0;
-    const diskPct = totalDiskTotal > 0 ? (totalDiskUsed / totalDiskTotal) * 100 : 0;
-
+    const metrics = aggregateOverviewMetrics(visibleNodes, visibleMeta, getNodeMetricsSnapshot);
     return {
-      totalNodes: visibleNodes.length,
-      onlineNodes,
-      offlineNodes,
-      trafficUp,
-      trafficDown,
-      netUp,
-      netDown,
-      avgCpu,
-      totalRamUsed,
-      totalRamTotal,
-      ramPct,
-      totalDiskUsed,
-      totalDiskTotal,
-      diskPct,
-      totalTcpConn,
-      totalUdpConn,
-      totalSwapUsed,
-      totalSwapTotal,
-      swapPct,
-      avgLoad1,
-      avgLoad5,
-      avgLoad15,
-      totalProcesses,
-      totalCores,
-      recentRebootNode,
+      ...metrics,
       avgPing: null,
       avgLoss: carrierLoss.peakLoss,
-      carrierLoss: carrierLoss,
+      carrierLoss,
       yesterdayBestScope: yesterdayScope,
       yesterdayBest: yesterdayBestDisplay,
       leaderboardNotice,
@@ -1203,10 +1123,15 @@ export function NodeGrid() {
 
   // 资产入口存在时预热汇率，供概览、价格排序和资产页复用。
   const costNeeded = showAssetCard || showCostFloatingButton;
+  const initialRateCache = useMemo(
+    () => readExchangeRateInitialData(themeSettings.costRateApiUrl),
+    [themeSettings.costRateApiUrl],
+  );
   const rateQuery = useQuery({
     queryKey: ["cost-rates", themeSettings.costRateApiUrl],
     queryFn: ({ signal }) => getExchangeRates(themeSettings.costRateApiUrl, { signal }),
-    initialData: () => readCachedExchangeRates(themeSettings.costRateApiUrl, true) ?? undefined,
+    initialData: initialRateCache?.data,
+    initialDataUpdatedAt: initialRateCache?.updatedAt,
     staleTime: 60 * 60 * 1000,
     // 「价格」排序也要汇率换算月化价,即便没显示资产卡也得拉一次;但空列表无需拉。
     enabled: (costNeeded || sortField === "price") && hasNodes,
@@ -1369,6 +1294,16 @@ export function NodeGrid() {
     }
     : gridStyle;
 
+  const openLeaderboard = useCallback(() => setIsLeaderboardModalOpen(true), []);
+  const closeLeaderboard = useCallback(() => setIsLeaderboardModalOpen(false), []);
+  const effectiveCostSummary = useMemo(
+    () =>
+      costSummary?.details.some((detail) => detail.counted || detail.note === "免费")
+        ? costSummary
+        : null,
+    [costSummary],
+  );
+
   if (!themeSettings.isReady || !storeHydrated) {
     if (!nodeInfoError) return null;
     return (
@@ -1398,7 +1333,7 @@ export function NodeGrid() {
           showDetailButton={showCostDetailButton}
           showAssetCard={showAssetCard}
           renewalNodes={renewalNodes}
-          costSummary={costSummary?.details.some(detail => detail.counted || detail.note === "免费") ? costSummary : null}
+          costSummary={effectiveCostSummary}
           costLoading={costLoading}
           showOverviewRatings={themeSettings.showOverviewRatings}
           showBandwidthRating={themeSettings.showBandwidthRating}
@@ -1422,8 +1357,23 @@ export function NodeGrid() {
           overviewStaticCards={themeSettings.overviewStaticCards}
           costCurrency={themeSettings.costCurrency}
           exchangeRates={rateQuery.data?.rates}
-          onOpenLeaderboard={() => setIsLeaderboardModalOpen(true)}
+          onOpenLeaderboard={openLeaderboard}
         />
+      )}
+      {isLeaderboardModalOpen && (
+        <Suspense fallback={null}>
+          <YesterdayBestLeaderboardModal
+            isOpen={isLeaderboardModalOpen}
+            onClose={closeLeaderboard}
+            notice={leaderboardNotice}
+            leaderboard={yesterdayLeaderboard}
+            allNodes={visibleMeta}
+            candidateUuids={yesterdayCandidateUuids}
+            scope={yesterdayScope}
+            isMultiPingMode={isMultiPingMode}
+            palette={themeSettings.matrixColorTheme || "default"}
+          />
+        </Suspense>
       )}
     </>
   );
@@ -1432,17 +1382,6 @@ export function NodeGrid() {
     return (
       <>
         {homeHeader}
-        <YesterdayBestLeaderboardModal
-          isOpen={isLeaderboardModalOpen}
-          onClose={() => setIsLeaderboardModalOpen(false)}
-          notice={leaderboardNotice}
-          leaderboard={yesterdayLeaderboard}
-          allNodes={visibleMeta}
-          candidateUuids={yesterdayCandidateUuids}
-          scope={yesterdayScope}
-          isMultiPingMode={isMultiPingMode}
-          palette={themeSettings.matrixColorTheme || "default"}
-        />
         <div className="flex h-[40vh] flex-col items-center justify-center gap-2 text-(--text-tertiary)">
           <span className="text-[15px]">尚未连接到任何节点</span>
           <span className="text-[12px]">当前主控筛选下暂无可展示的节点</span>
@@ -1454,17 +1393,6 @@ export function NodeGrid() {
   return (
     <>
       {homeHeader}
-      <YesterdayBestLeaderboardModal
-        isOpen={isLeaderboardModalOpen}
-        onClose={() => setIsLeaderboardModalOpen(false)}
-        notice={leaderboardNotice}
-        leaderboard={yesterdayLeaderboard}
-        allNodes={visibleMeta}
-        candidateUuids={yesterdayCandidateUuids}
-        scope={yesterdayScope}
-        isMultiPingMode={isMultiPingMode}
-        palette={themeSettings.matrixColorTheme || "default"}
-      />
       <section
         className="mao-cluster-card"
         aria-label="服务器集群与监控列表"

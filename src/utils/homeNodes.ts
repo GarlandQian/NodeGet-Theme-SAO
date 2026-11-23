@@ -1,4 +1,5 @@
 import type { HomeNodeSummary } from "@/services/wsStore";
+import type { NodeInfo, NodeMetrics } from "@/types/models";
 import { getDisplayRegionCode } from "@/utils/geo";
 
 export const HOME_ALL_GROUP = "__all__";
@@ -102,4 +103,149 @@ export function sortHomeGroupOptions(groups: string[], order: string[]): string[
   }
 
   return result;
+}
+
+export function sortNodesByWeight(nodes: readonly NodeInfo[]): NodeInfo[] {
+  return [...nodes].sort((left, right) => {
+    const leftWeight = Number(left.weight) || 0;
+    const rightWeight = Number(right.weight) || 0;
+    if (leftWeight !== rightWeight) return leftWeight - rightWeight;
+    const nameCmp = (left.name || "").localeCompare(right.name || "", "zh-CN");
+    if (nameCmp !== 0) return nameCmp;
+    return (left.uuid || "").localeCompare(right.uuid || "");
+  });
+}
+
+export interface AggregatedOverviewMetrics {
+  totalNodes: number;
+  onlineNodes: number;
+  offlineNodes: number;
+  trafficUp: number;
+  trafficDown: number;
+  netUp: number;
+  netDown: number;
+  avgCpu: number;
+  totalRamUsed: number;
+  totalRamTotal: number;
+  ramPct: number;
+  totalDiskUsed: number;
+  totalDiskTotal: number;
+  diskPct: number;
+  totalTcpConn: number;
+  totalUdpConn: number;
+  totalSwapUsed: number;
+  totalSwapTotal: number;
+  swapPct: number;
+  avgLoad1: number;
+  avgLoad5: number;
+  avgLoad15: number;
+  totalProcesses: number;
+  totalCores: number;
+  recentRebootNode: { name: string; seconds: number } | null;
+}
+
+/** 聚合可见节点实时读数与硬件总量；仅在线节点计入负载、占用和实时速率。 */
+export function aggregateOverviewMetrics(
+  summaries: readonly HomeNodeSummary[],
+  meta: readonly NodeInfo[],
+  getMetrics: (uuid: string) => NodeMetrics | undefined,
+): AggregatedOverviewMetrics {
+  let onlineNodes = 0;
+  let offlineNodes = 0;
+  let trafficUp = 0;
+  let trafficDown = 0;
+  let netUp = 0;
+  let netDown = 0;
+  let totalCpu = 0;
+  let totalRamUsed = 0;
+  let totalRamTotal = 0;
+  let totalSwapUsed = 0;
+  let totalSwapTotal = 0;
+  let totalDiskUsed = 0;
+  let totalDiskTotal = 0;
+  let totalTcpConn = 0;
+  let totalUdpConn = 0;
+  let totalProcesses = 0;
+  let totalLoad1 = 0;
+  let totalLoad5 = 0;
+  let totalLoad15 = 0;
+  let totalCores = 0;
+
+  for (const node of summaries) {
+    if (node.online === true) {
+      onlineNodes += 1;
+      totalCpu += node.cpuPct || 0;
+      totalRamUsed += node.ramUsed || 0;
+      totalSwapUsed += node.swapUsed || 0;
+      totalDiskUsed += node.diskUsed || 0;
+      totalTcpConn += node.connectionsTcp || 0;
+      totalUdpConn += node.connectionsUdp || 0;
+      totalProcesses += node.process || 0;
+      totalLoad1 += node.load1 || 0;
+      totalLoad5 += node.load5 || 0;
+      totalLoad15 += node.load15 || 0;
+      netUp += node.netUp || 0;
+      netDown += node.netDown || 0;
+    } else if (node.online === false) {
+      offlineNodes += 1;
+    }
+    totalRamTotal += node.ramTotal || 0;
+    totalSwapTotal += node.swapTotal || 0;
+    totalDiskTotal += node.diskTotal || 0;
+    trafficUp += node.trafficUp || 0;
+    trafficDown += node.trafficDown || 0;
+  }
+
+  let minUptimeSeconds = Number.POSITIVE_INFINITY;
+  let recentRebootNode: { name: string; seconds: number } | null = null;
+
+  for (const item of meta) {
+    totalCores += item.cpu_cores || 0;
+    const metrics = getMetrics(item.uuid);
+    if (metrics && metrics.online === true && Number.isFinite(metrics.uptime) && metrics.uptime >= 0) {
+      if (metrics.uptime < minUptimeSeconds) {
+        minUptimeSeconds = metrics.uptime;
+        recentRebootNode = {
+          name: item.name?.trim() || item.uuid,
+          seconds: metrics.uptime,
+        };
+      }
+    }
+  }
+
+  const avgCpu = onlineNodes > 0 ? totalCpu / onlineNodes : 0;
+  const avgLoad1 = onlineNodes > 0 ? totalLoad1 / onlineNodes : 0;
+  const avgLoad5 = onlineNodes > 0 ? totalLoad5 / onlineNodes : 0;
+  const avgLoad15 = onlineNodes > 0 ? totalLoad15 / onlineNodes : 0;
+  const ramPct = totalRamTotal > 0 ? (totalRamUsed / totalRamTotal) * 100 : 0;
+  const swapPct = totalSwapTotal > 0 ? (totalSwapUsed / totalSwapTotal) * 100 : 0;
+  const diskPct = totalDiskTotal > 0 ? (totalDiskUsed / totalDiskTotal) * 100 : 0;
+
+  return {
+    totalNodes: summaries.length,
+    onlineNodes,
+    offlineNodes,
+    trafficUp,
+    trafficDown,
+    netUp,
+    netDown,
+    avgCpu,
+    totalRamUsed,
+    totalRamTotal,
+    ramPct,
+    totalDiskUsed,
+    totalDiskTotal,
+    diskPct,
+    totalTcpConn,
+    totalUdpConn,
+    totalSwapUsed,
+    totalSwapTotal,
+    swapPct,
+    avgLoad1,
+    avgLoad5,
+    avgLoad15,
+    totalProcesses,
+    totalCores,
+    recentRebootNode,
+  };
 }

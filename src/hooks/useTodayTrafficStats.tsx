@@ -329,36 +329,66 @@ export function useTodayTrafficStats(
   return useQuery(getTodayTrafficQueryOptions(uuids, now, mode, includeRates, scope));
 }
 
+const EMPTY_HOURLY_BUCKETS: HourlyTrafficBucket[] = [];
+const UNAVAILABLE_HOURLY_BUCKET: HourlyTrafficBucket = { up: 0, down: 0, total: 0, available: false };
+
 /** 今日总量和逐小时流量使用不同的快照区间，首页可分别加载。 */
 export function useHourlyTrafficBuckets(uuids: string[], now: number, enabled: boolean) {
   const scope = useNodeGetCacheScope();
-  const selected = [...new Set(uuids)].sort();
+  const selectedKey = useMemo(() => [...new Set(uuids)].sort().join(","), [uuids]);
+  const selected = useMemo(() => (selectedKey ? selectedKey.split(",") : []), [selectedKey]);
   const hour = 3_600_000;
-  const currentHour = new Date(now);
-  currentHour.setMinutes(0, 0, 0);
-  const queries = Array.from({ length: 7 }, (_, index) => {
-    const current = index === 6;
-    const start = currentHour.getTime() - (6 - index) * hour;
-    return queryOptions({
-      queryKey: ["traffic-stats", "hour", scope, selected, start, current],
-      enabled: enabled && Boolean(scope) && selected.length > 0,
-      queryFn: async ({ signal }): Promise<HourlyTrafficBucket> => {
-        const end = Math.min(Date.now(), start + hour);
-        if (end <= start) return { up: 0, down: 0, total: 0, available: false };
-        const data = await getTodayTrafficMetrics(selected, start, end, {
-          signal, includeRates: false, timeout: TRAFFIC_REQUEST_TIMEOUT_MS,
+  const currentHourMs = useMemo(() => {
+    const currentHour = new Date(now);
+    currentHour.setMinutes(0, 0, 0);
+    return currentHour.getTime();
+  }, [now]);
+  const queries = useMemo(
+    () =>
+      Array.from({ length: 7 }, (_, index) => {
+        const current = index === 6;
+        const start = currentHourMs - (6 - index) * hour;
+        return queryOptions({
+          queryKey: ["traffic-stats", "hour", scope, selected, start, current],
+          enabled: enabled && Boolean(scope) && selected.length > 0,
+          queryFn: async ({ signal }): Promise<HourlyTrafficBucket> => {
+            const end = Math.min(Date.now(), start + hour);
+            if (end <= start) return UNAVAILABLE_HOURLY_BUCKET;
+            const data = await getTodayTrafficMetrics(selected, start, end, {
+              signal, includeRates: false, timeout: TRAFFIC_REQUEST_TIMEOUT_MS,
+            });
+            return summarizeHourlyTraffic(data.series, selected, Object.keys(data.issues ?? {}).length > 0);
+          },
+          staleTime: current ? 60_000 : 30 * 60_000,
+          gcTime: 7 * hour,
+          refetchInterval: current ? 5 * 60_000 : false as const,
+          retry: false,
         });
-        return summarizeHourlyTraffic(data.series, selected, Object.keys(data.issues ?? {}).length > 0);
-      },
-      staleTime: current ? 60_000 : 30 * 60_000,
-      gcTime: 7 * hour,
-      refetchInterval: current ? 5 * 60_000 : false as const,
-      retry: false,
-    });
-  });
-  const data = useQueries({ queries }).map(query =>
-    query.data ?? { up: 0, down: 0, total: 0, available: false });
-  return { data: enabled && data.some(bucket => bucket.available) ? data : [] };
+      }),
+    [currentHourMs, enabled, scope, selected],
+  );
+  const results = useQueries({ queries });
+  const d0 = results[0]?.data;
+  const d1 = results[1]?.data;
+  const d2 = results[2]?.data;
+  const d3 = results[3]?.data;
+  const d4 = results[4]?.data;
+  const d5 = results[5]?.data;
+  const d6 = results[6]?.data;
+  const data = useMemo(() => {
+    if (!enabled) return EMPTY_HOURLY_BUCKETS;
+    const buckets = [
+      d0 ?? UNAVAILABLE_HOURLY_BUCKET,
+      d1 ?? UNAVAILABLE_HOURLY_BUCKET,
+      d2 ?? UNAVAILABLE_HOURLY_BUCKET,
+      d3 ?? UNAVAILABLE_HOURLY_BUCKET,
+      d4 ?? UNAVAILABLE_HOURLY_BUCKET,
+      d5 ?? UNAVAILABLE_HOURLY_BUCKET,
+      d6 ?? UNAVAILABLE_HOURLY_BUCKET,
+    ];
+    return buckets.some(bucket => bucket.available) ? buckets : EMPTY_HOURLY_BUCKETS;
+  }, [d0, d1, d2, d3, d4, d5, d6, enabled]);
+  return { data };
 }
 
 export function preloadTodayTrafficStats(

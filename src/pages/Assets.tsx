@@ -19,7 +19,7 @@ import {
   formatCurrencyMoney,
   formatSignedCurrency,
   getExchangeRates,
-  readCachedExchangeRates,
+  readExchangeRateInitialData,
   type CostTargetCurrency,
 } from "@/utils/cost";
 import { formatBillingCycle } from "@/utils/billing";
@@ -138,6 +138,10 @@ export function Assets() {
     () => new Map(renewalReminders.map((item) => [item.uuid, item])),
     [renewalReminders],
   );
+  const initialRateCache = useMemo(
+    () => readExchangeRateInitialData(themeSettings.costRateApiUrl),
+    [themeSettings.costRateApiUrl],
+  );
   const rateQuery = useQuery({
     queryKey: ["cost-rates", themeSettings.costRateApiUrl],
     queryFn: ({ signal }) => {
@@ -145,7 +149,8 @@ export function Assets() {
       forceRateRefresh.current = false;
       return getExchangeRates(themeSettings.costRateApiUrl, { signal, ignoreCache });
     },
-    initialData: () => readCachedExchangeRates(themeSettings.costRateApiUrl, true) ?? undefined,
+    initialData: initialRateCache?.data,
+    initialDataUpdatedAt: initialRateCache?.updatedAt,
     staleTime: 60 * 60 * 1000,
     enabled: themeSettings.isReady && themeSettings.showPriceForGuests && nodes.length > 0,
     retry: 1,

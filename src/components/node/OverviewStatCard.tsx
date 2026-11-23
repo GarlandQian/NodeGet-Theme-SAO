@@ -28,6 +28,7 @@ import { getRenewalReminders } from "@/utils/renewalReminder";
 import type { HourlyTrafficBucket } from "@/utils/trafficStats";
 import { type CarrierLossSummary, getLossTier } from "@/utils/carrierLoss";
 import { CURRENCY_SYMBOLS, convertCnyToTargetCurrency, resolveCostCurrency, type CostTargetCurrency } from "@/utils/cost";
+import { useHourlyClock } from "@/hooks/useClock";
 
 function TrafficBarsIcon({ size = 14 }: { size?: number }) {
   return (
@@ -97,6 +98,7 @@ export interface OverviewStatCardProps {
   showTrafficDetailButton?: boolean;
   showDetailButton?: boolean;
   renewalNodes?: RenewalReminderSource[];
+  renewalCount?: number;
   onWarmTraffic?: () => void;
   onOpenLeaderboard?: () => void;
   isActive?: boolean;
@@ -144,7 +146,7 @@ function formatRebootAgo(seconds: number): { value: string; unit: string; fullTe
   return { value: String(minutes), unit: "分钟前", fullText: `${minutes}分钟前` };
 }
 
-export const OverviewStatCard: React.FC<OverviewStatCardProps> = ({
+export const OverviewStatCard: React.FC<OverviewStatCardProps> = React.memo(function OverviewStatCard({
   cardId,
   overview,
   todayTrafficTotal,
@@ -159,6 +161,7 @@ export const OverviewStatCard: React.FC<OverviewStatCardProps> = ({
   showTrafficDetailButton = false,
   showDetailButton = false,
   renewalNodes,
+  renewalCount: propRenewalCount,
   onWarmTraffic,
   onOpenLeaderboard,
   isActive = false,
@@ -168,12 +171,15 @@ export const OverviewStatCard: React.FC<OverviewStatCardProps> = ({
   onDragEnd,
   onClick,
   microVisualMode,
-}) => {
+}: OverviewStatCardProps) {
   const [renewalPopoverOpen, setRenewalPopoverOpen] = React.useState(false);
-  const renewalReminders = renewalNodes
-    ? getRenewalReminders(renewalNodes, Date.now(), { requireOnlineForExpired: true })
-    : [];
-  const renewalCount = renewalReminders.length;
+  const needsAssetRenewal = cardId === "asset" && showDetailButton && Boolean(renewalNodes?.length) && propRenewalCount === undefined;
+  const renewalClock = useHourlyClock(needsAssetRenewal);
+  const renewalCount = React.useMemo(() => {
+    if (propRenewalCount !== undefined) return propRenewalCount;
+    if (!needsAssetRenewal || !renewalNodes) return 0;
+    return getRenewalReminders(renewalNodes, renewalClock, { requireOnlineForExpired: true }).length;
+  }, [needsAssetRenewal, propRenewalCount, renewalClock, renewalNodes]);
   // 提取各指标数值，支持真实数据或缺省预览数据
   const totalTcpConn = overview?.totalTcpConn ?? 1250;
   const totalUdpConn = overview?.totalUdpConn ?? 90;
@@ -948,4 +954,4 @@ export const OverviewStatCard: React.FC<OverviewStatCardProps> = ({
     default:
       return null;
   }
-};
+});

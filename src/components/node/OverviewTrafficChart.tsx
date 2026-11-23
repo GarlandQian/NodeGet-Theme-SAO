@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { formatByteRate, formatByteRateLabel } from "@/utils/format";
 import { usePreferences } from "@/hooks/usePreferences";
 import { useThemeSettings } from "@/hooks/useThemeSettings";
@@ -153,7 +153,7 @@ export function getTrafficChartThemeStyles(
   }
 }
 
-function SingleTrafficCard({
+const SingleTrafficCard = memo(function SingleTrafficCard({
   title,
   direction,
   rate,
@@ -517,9 +517,9 @@ function SingleTrafficCard({
       </div>
     </div>
   );
-}
+});
 
-export function OverviewTrafficChart({
+export const OverviewTrafficChart = memo(function OverviewTrafficChart({
   netUp,
   netDown,
   colorTheme: propColorTheme,
@@ -572,4 +572,4 @@ export function OverviewTrafficChart({
       </div>
     </div>
   );
-}
+});

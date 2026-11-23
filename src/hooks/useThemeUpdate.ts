@@ -37,6 +37,38 @@ function getNextMockVersion(version: string): string {
   return `v${major}.${minor}.${patch}`;
 }
 
+interface CachedUpdateEntry {
+  timestamp: number;
+  latestVersion: string;
+  releaseUrl: string;
+}
+
+function readCachedUpdate(cacheKey: string): CachedUpdateEntry | null {
+  if (typeof localStorage === "undefined") return null;
+  try {
+    const cached = localStorage.getItem(cacheKey);
+    if (!cached) return null;
+    const parsed = JSON.parse(cached) as Partial<CachedUpdateEntry> | null;
+    if (
+      !parsed ||
+      typeof parsed.timestamp !== "number" ||
+      !Number.isFinite(parsed.timestamp) ||
+      Date.now() - parsed.timestamp >= CHECK_INTERVAL_MS ||
+      typeof parsed.latestVersion !== "string" ||
+      !parsed.latestVersion
+    ) {
+      return null;
+    }
+    return {
+      timestamp: parsed.timestamp,
+      latestVersion: parsed.latestVersion,
+      releaseUrl: typeof parsed.releaseUrl === "string" ? parsed.releaseUrl : "",
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function useThemeUpdate(repo = "GarlandQian/NodeGet-Theme-SAO") {
   const currentVersion = `v${pkg.version || "1.0.0"}`;
   const cacheKey = `${STORAGE_KEY}:${repo}`;
@@ -58,21 +90,14 @@ export function useThemeUpdate(repo = "GarlandQian/NodeGet-Theme-SAO") {
     }
 
     // 从 LocalStorage 读取缓存
-    if (typeof localStorage !== "undefined") {
-      try {
-        const cached = localStorage.getItem(cacheKey);
-        if (cached) {
-          const parsed = JSON.parse(cached);
-          if (Date.now() - parsed.timestamp < CHECK_INTERVAL_MS) {
-            return {
-              hasUpdate: compareSemver(parsed.latestVersion, currentVersion),
-              latestVersion: parsed.latestVersion,
-              currentVersion,
-              releaseUrl: parsed.releaseUrl || `https://github.com/${repo}/releases`,
-            };
-          }
-        }
-      } catch {}
+    const cached = readCachedUpdate(cacheKey);
+    if (cached) {
+      return {
+        hasUpdate: compareSemver(cached.latestVersion, currentVersion),
+        latestVersion: cached.latestVersion,
+        currentVersion,
+        releaseUrl: cached.releaseUrl || `https://github.com/${repo}/releases`,
+      };
     }
 
     return {
@@ -84,10 +109,10 @@ export function useThemeUpdate(repo = "GarlandQian/NodeGet-Theme-SAO") {
   });
 
   useEffect(() => {
-    // mock 预览模式不发起远程真实请求
-    if (isMockPreview) return;
+    // mock 预览模式不发起远程真实请求；缓存有效期内直接命中缓存不重复拉取 GitHub API。
+    if (isMockPreview || readCachedUpdate(cacheKey)) return;
 
-    let ignore = false;
+    const controller = new AbortController();
 
     async function checkForUpdates() {
       try {
@@ -98,6 +123,7 @@ export function useThemeUpdate(repo = "GarlandQian/NodeGet-Theme-SAO") {
         try {
           const res = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, {
             headers: { Accept: "application/vnd.github.v3+json" },
+            signal: controller.signal,
           });
           if (res.ok) {
             const data = await res.json();
@@ -110,10 +136,11 @@ export function useThemeUpdate(repo = "GarlandQian/NodeGet-Theme-SAO") {
         } catch {}
 
         // 2. 如果 Releases 暂无新 Tag，回退读取远端 main 分支 package.json 上的 version
-        if (!cleanLatest) {
+        if (!cleanLatest && !controller.signal.aborted) {
           try {
             const rawRes = await fetch(`https://raw.githubusercontent.com/${repo}/main/package.json`, {
               cache: "no-store",
+              signal: controller.signal,
             });
             if (rawRes.ok) {
               const rawPkg = await rawRes.json();
@@ -124,7 +151,7 @@ export function useThemeUpdate(repo = "GarlandQian/NodeGet-Theme-SAO") {
           } catch {}
         }
 
-        if (!cleanLatest || ignore) return;
+        if (!cleanLatest || controller.signal.aborted) return;
 
         const hasNew = compareSemver(cleanLatest, currentVersion);
         const newState: UpdateState = {
@@ -151,10 +178,10 @@ export function useThemeUpdate(repo = "GarlandQian/NodeGet-Theme-SAO") {
       }
     }
 
-    checkForUpdates();
+    void checkForUpdates();
 
     return () => {
-      ignore = true;
+      controller.abort();
     };
   }, [repo, currentVersion, isMockPreview, cacheKey]);
 

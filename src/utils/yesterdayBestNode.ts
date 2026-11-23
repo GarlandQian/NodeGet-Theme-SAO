@@ -146,9 +146,10 @@ export function rankNodePingStats(
       coveredCarriers, missingCarriers, isQualified: !missingCarriers.length,
     });
   }
+  const candidateOrder = new Map(candidateUuids.map((id, index) => [id, index]));
   list.sort((a, b) => Number(b.isQualified) - Number(a.isQualified) ||
     b.score - a.score || a.cv - b.cv || a.spikeRatio - b.spikeRatio ||
-    a.avgLatency - b.avgLatency || candidateUuids.indexOf(a.uuid) - candidateUuids.indexOf(b.uuid));
+    a.avgLatency - b.avgLatency || (candidateOrder.get(a.uuid) ?? -1) - (candidateOrder.get(b.uuid) ?? -1));
   const leaderboard = list.map((item, i): YesterdayLeaderboardItem => ({ ...item, rank: i + 1 }));
   return { best: leaderboard.find(item => item.isQualified) ?? null, leaderboard };
 }

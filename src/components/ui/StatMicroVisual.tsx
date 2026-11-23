@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useId, useRef } from "react";
 import type { OverviewCardId, OverviewMicroVisualMode } from "@/types/models";
 import type { HourlyTrafficBucket } from "@/utils/trafficStats";
 import { getLossTier } from "@/utils/carrierLoss";
@@ -33,7 +33,7 @@ export interface StatMicroVisualProps {
   yesterdayScore?: number;
 }
 
-export const StatMicroVisual: React.FC<StatMicroVisualProps> = ({
+export const StatMicroVisual: React.FC<StatMicroVisualProps> = React.memo(function StatMicroVisual({
   metric,
   ramPct = 46.5,
   diskPct = 29.2,
@@ -57,7 +57,7 @@ export const StatMicroVisual: React.FC<StatMicroVisualProps> = ({
   cmLoss,
   peakLoss: _peakLoss,
   yesterdayScore,
-}) => {
+}: StatMicroVisualProps) {
   const isStatic = microVisualMode === "static";
 
   switch (metric) {
@@ -897,7 +897,7 @@ export const StatMicroVisual: React.FC<StatMicroVisualProps> = ({
     default:
       return null;
   }
-};
+});
 
 /* ------------------------------------------------------------------ *
  * 实时带宽微图专属组件：流体交织贝塞尔曲线 (BandwidthMicroVisual)
@@ -942,15 +942,25 @@ function pointsToSplinePath(pts: Array<{ x: number; y: number }>): string {
   return segs.join(" ");
 }
 
-const BandwidthMicroVisual: React.FC<BandwidthMicroVisualProps> = ({
+function computeBandwidthMetrics(bytes: number) {
+  if (bytes <= 512) return { scale: 0.22, speedWeight: 0.5 };
+  const logVal = Math.log10(bytes / 512) / Math.log10(104857600 / 512); // 0 ~ 1
+  const clamped = Math.min(1.0, Math.max(0, logVal));
+  const scale = 0.22 + clamped * 0.93; // 0.22 ~ 1.15
+  const speedWeight = 0.5 + clamped * 1.8; // 0.5x ~ 2.3x
+  return { scale, speedWeight };
+}
+
+const BandwidthMicroVisual: React.FC<BandwidthMicroVisualProps> = React.memo(function BandwidthMicroVisual({
   metric,
   isStatic,
   netUp = 0,
   netDown = 0,
-}) => {
-  const gradRxId = `mao-spark-grad-rx-${metric}`;
-  const gradTxId = `mao-spark-grad-tx-${metric}`;
-  const maskId = `mao-spark-fade-mask-${metric}`;
+}) {
+  const uid = useId();
+  const gradRxId = `mao-spark-grad-rx-${metric}-${uid}`;
+  const gradTxId = `mao-spark-grad-tx-${metric}-${uid}`;
+  const maskId = `mao-spark-fade-mask-${metric}-${uid}`;
 
   // 静态模式下的经典曲线 (横向完整延展，左右两端自然隐退)
   const staticTxArea = "M 0 70 L 0 56 C 14 54, 20 50, 28 50 C 36 50, 42 56, 50 56 C 58 56, 66 42, 74 40 C 82 38, 90 44, 100 32 C 104 28, 108 26, 112 24 L 112 70 Z";
@@ -958,24 +968,27 @@ const BandwidthMicroVisual: React.FC<BandwidthMicroVisualProps> = ({
   const staticRxArea = "M 0 70 L 0 62 C 12 60, 16 52, 24 48 C 32 44, 36 40, 44 34 C 52 28, 58 44, 66 42 C 74 40, 78 24, 88 18 C 94 14, 98 16, 100 16 C 104 16, 108 20, 112 24 L 112 70 Z";
   const staticRxLine = "M 0 62 C 12 60, 16 52, 24 48 C 32 44, 36 40, 44 34 C 52 28, 58 44, 66 42 C 74 40, 78 24, 88 18 C 94 14, 98 16, 100 16 C 104 16, 108 20, 112 24";
 
-  // 动态模式下的曲线状态 (以静态形状为基准平滑过渡)
-  const [dynState, setDynState] = useState<{
-    txLine: string;
-    txArea: string;
-    rxLine: string;
-    rxArea: string;
-    dotY: number;
-    pulseDuration: number;
-    rxOpacity: number;
-  }>({
-    txLine: staticTxLine,
-    txArea: staticTxArea,
-    rxLine: staticRxLine,
-    rxArea: staticRxArea,
-    dotY: 16,
-    pulseDuration: 2.0,
-    rxOpacity: 0.45,
+  const txAreaRef = useRef<SVGPathElement | null>(null);
+  const txLineRef = useRef<SVGPathElement | null>(null);
+  const rxAreaRef = useRef<SVGPathElement | null>(null);
+  const rxLineRef = useRef<SVGPathElement | null>(null);
+  const rxStopRef = useRef<SVGStopElement | null>(null);
+  const dotRef = useRef<SVGCircleElement | null>(null);
+  const pulseRef = useRef<SVGCircleElement | null>(null);
+
+  const targetRef = useRef({
+    targetTxScale: 0.22,
+    targetRxScale: 0.22,
+    targetSpeed: 0.5,
   });
+
+  useEffect(() => {
+    const txMetrics = computeBandwidthMetrics(Math.max(0, netUp));
+    const rxMetrics = computeBandwidthMetrics(Math.max(0, netDown));
+    targetRef.current.targetTxScale = txMetrics.scale;
+    targetRef.current.targetRxScale = rxMetrics.scale;
+    targetRef.current.targetSpeed = Math.max(txMetrics.speedWeight, rxMetrics.speedWeight);
+  }, [netUp, netDown]);
 
   // 真实网速缩放与流速平滑阻尼跟踪
   const trackerRef = useRef({
@@ -988,33 +1001,24 @@ const BandwidthMicroVisual: React.FC<BandwidthMicroVisualProps> = ({
 
   useEffect(() => {
     if (isStatic) return;
-
-    // 对数层级映射：
-    // 0 ~ 50 KB/s:    微弱待机 (scale 0.25 ~ 0.35, speed 0.55x, 波形平缓慢速沉在下方)
-    // 100 KB/s ~ 2MB: 常规业务 (scale 0.45 ~ 0.70, speed 1.0x ~ 1.3x, 自然游动交织)
-    // 10MB ~ 100MB+:  高速/暴增 (scale 0.85 ~ 1.15, speed 1.8x ~ 2.4x, 耸立如大浪，奔腾流过)
-    const computeMetrics = (bytes: number) => {
-      if (bytes <= 512) return { scale: 0.22, speedWeight: 0.5 };
-      const logVal = Math.log10(bytes / 512) / Math.log10(104857600 / 512); // 0 ~ 1
-      const clamped = Math.min(1.0, Math.max(0, logVal));
-      const scale = 0.22 + clamped * 0.93; // 0.22 ~ 1.15
-      const speedWeight = 0.5 + clamped * 1.8; // 0.5x ~ 2.3x
-      return { scale, speedWeight };
-    };
-
-    const txMetrics = computeMetrics(Math.max(0, netUp));
-    const rxMetrics = computeMetrics(Math.max(0, netDown));
-
-    const targetTxScale = txMetrics.scale;
-    const targetRxScale = rxMetrics.scale;
-    // 综合流速取上下行活跃度较高的一侧驱动
-    const targetSpeed = Math.max(txMetrics.speedWeight, rxMetrics.speedWeight);
+    if (typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+      return;
+    }
 
     let lastTimestamp = performance.now();
+    let disposed = false;
 
     const loop = (now: number) => {
+      if (disposed) return;
+      if (typeof document !== "undefined" && document.hidden) {
+        animFrameRef.current = null;
+        return;
+      }
+
       const dt = Math.min(0.08, (now - lastTimestamp) / 1000);
       lastTimestamp = now;
+
+      const { targetRxScale, targetTxScale, targetSpeed } = targetRef.current;
 
       // 流体惯性阻尼跟随 (0.04 极平滑追随，确保毫无数值跳变突兀感)
       trackerRef.current.rxScale += (targetRxScale - trackerRef.current.rxScale) * 0.04;
@@ -1029,7 +1033,7 @@ const BandwidthMicroVisual: React.FC<BandwidthMicroVisualProps> = ({
       timeRef.current += dt * curSpeed * 1.15;
       const t = timeRef.current;
 
-      // 计算 7 采样点的实时物理坐标
+      // 计算 8 采样点的实时物理坐标
       const rxPts: Array<{ x: number; y: number }> = [];
       const txPts: Array<{ x: number; y: number }> = [];
 
@@ -1059,39 +1063,60 @@ const BandwidthMicroVisual: React.FC<BandwidthMicroVisualProps> = ({
       const rxAreaStr = `${rxLineStr} L 112 70 L 0 70 Z`;
       const txAreaStr = `${txLineStr} L 112 70 L 0 70 Z`;
 
-      // 右侧高光粒子 Y 坐标：严格咬合在 x=100 处的采样点 (倒数第 2 个点 rxPts[6])
+      // 右侧高光粒子 Y 坐标：严格咬合在 x=96 处的采样点 (倒数第 2 个点 rxPts[6])
       const dotPt = rxPts.find((p) => Math.abs(p.x - 96) < 4) || rxPts[rxPts.length - 2] || rxPts[rxPts.length - 1];
-      const currentDotY = dotPt.y;
+      const currentDotY = dotPt.y.toFixed(2);
 
       // 脉冲光晕与渐变辉光动态感应带宽
       const pulseDuration = Math.max(0.9, 2.4 - curSpeed * 0.6);
       const rxOpacity = 0.30 + Math.min(0.35, sRx * 0.3);
 
-      setDynState({
-        txLine: txLineStr,
-        txArea: txAreaStr,
-        rxLine: rxLineStr,
-        rxArea: rxAreaStr,
-        dotY: currentDotY,
-        pulseDuration,
-        rxOpacity,
-      });
+      txAreaRef.current?.setAttribute("d", txAreaStr);
+      txLineRef.current?.setAttribute("d", txLineStr);
+      rxAreaRef.current?.setAttribute("d", rxAreaStr);
+      rxLineRef.current?.setAttribute("d", rxLineStr);
+      rxStopRef.current?.setAttribute("stop-opacity", rxOpacity.toFixed(3));
+      dotRef.current?.setAttribute("cy", currentDotY);
+      if (pulseRef.current) {
+        pulseRef.current.setAttribute("cy", currentDotY);
+        pulseRef.current.style.animationDuration = `${pulseDuration.toFixed(2)}s`;
+      }
 
       animFrameRef.current = requestAnimationFrame(loop);
     };
 
-    animFrameRef.current = requestAnimationFrame(loop);
+    const handleVisibilityChange = () => {
+      if (typeof document === "undefined" || disposed) return;
+      if (document.hidden) {
+        if (animFrameRef.current != null) {
+          cancelAnimationFrame(animFrameRef.current);
+          animFrameRef.current = null;
+        }
+      } else if (animFrameRef.current == null) {
+        lastTimestamp = performance.now();
+        animFrameRef.current = requestAnimationFrame(loop);
+      }
+    };
+
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", handleVisibilityChange);
+    }
+
+    if (typeof document === "undefined" || !document.hidden) {
+      animFrameRef.current = requestAnimationFrame(loop);
+    }
 
     return () => {
-      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+      disposed = true;
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", handleVisibilityChange);
+      }
+      if (animFrameRef.current != null) {
+        cancelAnimationFrame(animFrameRef.current);
+        animFrameRef.current = null;
+      }
     };
-  }, [isStatic, netUp, netDown]);
-
-  const txArea = isStatic ? staticTxArea : dynState.txArea;
-  const txLine = isStatic ? staticTxLine : dynState.txLine;
-  const rxArea = isStatic ? staticRxArea : dynState.rxArea;
-  const rxLine = isStatic ? staticRxLine : dynState.rxLine;
-  const dotY = isStatic ? 16 : dynState.dotY;
+  }, [isStatic]);
 
   return (
     <svg
@@ -1102,9 +1127,10 @@ const BandwidthMicroVisual: React.FC<BandwidthMicroVisualProps> = ({
       <defs>
         <linearGradient id={gradRxId} x1="0" y1="0" x2="0" y2="1">
           <stop
+            ref={rxStopRef}
             offset="0%"
             stopColor="currentColor"
-            stopOpacity={isStatic ? 0.45 : dynState.rxOpacity}
+            stopOpacity={0.45}
           />
           <stop offset="100%" stopColor="currentColor" stopOpacity="0.0" />
         </linearGradient>
@@ -1138,12 +1164,14 @@ const BandwidthMicroVisual: React.FC<BandwidthMicroVisualProps> = ({
       <g mask={`url(#${maskId})`}>
         {/* 上行流 (TX) 平滑贝塞尔曲面 */}
         <path
-          d={txArea}
+          ref={isStatic ? undefined : txAreaRef}
+          d={staticTxArea}
           fill={`url(#${gradTxId})`}
           className="mao-spark-area-tx"
         />
         <path
-          d={txLine}
+          ref={isStatic ? undefined : txLineRef}
+          d={staticTxLine}
           fill="none"
           stroke="var(--traffic-spark-tx, #38bdf8)"
           strokeWidth="2.4"
@@ -1154,12 +1182,14 @@ const BandwidthMicroVisual: React.FC<BandwidthMicroVisualProps> = ({
 
         {/* 下行流 (RX) 平滑贝塞尔曲面 */}
         <path
-          d={rxArea}
+          ref={isStatic ? undefined : rxAreaRef}
+          d={staticRxArea}
           fill={`url(#${gradRxId})`}
           className="mao-spark-area-rx"
         />
         <path
-          d={rxLine}
+          ref={isStatic ? undefined : rxLineRef}
+          d={staticRxLine}
           fill="none"
           stroke="currentColor"
           strokeWidth="2.8"
@@ -1171,16 +1201,17 @@ const BandwidthMicroVisual: React.FC<BandwidthMicroVisualProps> = ({
 
       {/* 活跃端点高光粒子：锁定在 x=96 处主波峰位置 */}
       <g className="mao-bandwidth-dot-wrap">
-        <circle cx="96" cy={dotY} r="3.6" fill="currentColor" className="mao-spark-dot" />
+        <circle ref={isStatic ? undefined : dotRef} cx="96" cy="16" r="3.6" fill="currentColor" className="mao-spark-dot" />
         <circle
+          ref={isStatic ? undefined : pulseRef}
           cx="96"
-          cy={dotY}
+          cy="16"
           r="7.2"
           fill="currentColor"
           className="mao-spark-pulse"
-          style={isStatic ? undefined : { animationDuration: `${dynState.pulseDuration.toFixed(2)}s` }}
+          style={isStatic ? undefined : { animationDuration: "2.00s" }}
         />
       </g>
     </svg>
   );
-};
+});

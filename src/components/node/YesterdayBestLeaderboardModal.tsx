@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { Trophy, X, Search, Award, Activity, Radio, ShieldCheck, AlertCircle, HelpCircle } from "lucide-react";
 import type { NodeInfo, YesterdayBestScope } from "@/types/models";
 import type { YesterdayLeaderboardItem } from "@/utils/yesterdayBestNode";
-import { sortNodesByWeight } from "@/pages/ThemeManage/components/CarrierLossConfigModal";
+import { sortNodesByWeight } from "@/utils/homeNodes";
 
 export interface YesterdayBestLeaderboardModalProps {
   isOpen: boolean;
@@ -48,6 +48,15 @@ export function YesterdayBestLeaderboardModal({
       document.removeEventListener("touchstart", handleOutsideClick);
     };
   }, [isHelpOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen, onClose]);
 
   const scopeInfo = useMemo(() => {
     switch (scope) {
@@ -94,6 +103,10 @@ export function YesterdayBestLeaderboardModal({
   const nodeByUuid = useMemo(() => new Map(allNodes.map((n) => [n.uuid, n])), [allNodes]);
   // 统一按权重升序对齐所有节点的基准排序
   const sortedAllNodes = useMemo(() => sortNodesByWeight(allNodes), [allNodes]);
+  const nodeIndexByUuid = useMemo(
+    () => new Map(sortedAllNodes.map((n, index) => [n.uuid, index])),
+    [sortedAllNodes],
+  );
 
   // 区分参与评分且有数据的列表与未参与列表
   const { participatingItems, excludedNodes } = useMemo(() => {
@@ -105,8 +118,8 @@ export function YesterdayBestLeaderboardModal({
       const name = node?.name?.trim() || item.name || item.uuid;
       const group = node?.group || "";
       const region = node?.region || "";
-      const nodeIndex = sortedAllNodes.findIndex((n) => n.uuid === item.uuid);
-      const nodeIndexText = nodeIndex >= 0 ? `#${nodeIndex + 1}` : "#--";
+      const nodeIndex = nodeIndexByUuid.get(item.uuid);
+      const nodeIndexText = nodeIndex !== undefined ? `#${nodeIndex + 1}` : "#--";
       return {
         ...item,
         name,
@@ -129,7 +142,7 @@ export function YesterdayBestLeaderboardModal({
 
     // 2. 被用户在设置中排除或暂无数据的节点
     const rankedUuids = new Set(leaderboard.map((i) => i.uuid));
-    let exclList = sortNodesByWeight(sortedAllNodes.filter((n) => !candidateSet.has(n.uuid) || !rankedUuids.has(n.uuid)));
+    let exclList = sortedAllNodes.filter((n) => !candidateSet.has(n.uuid) || !rankedUuids.has(n.uuid));
 
     if (kw) {
       exclList = exclList.filter((n) => {
@@ -141,7 +154,7 @@ export function YesterdayBestLeaderboardModal({
     }
 
     return { participatingItems: partList, excludedNodes: exclList };
-  }, [leaderboard, sortedAllNodes, candidateSet, nodeByUuid, keyword]);
+  }, [leaderboard, sortedAllNodes, nodeIndexByUuid, candidateSet, nodeByUuid, keyword]);
 
   if (!isOpen) return null;
   if (typeof document === "undefined") return null;
@@ -405,8 +418,8 @@ export function YesterdayBestLeaderboardModal({
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
                 {excludedNodes.map((n) => {
-                  const nodeIndex = sortedAllNodes.findIndex((x) => x.uuid === n.uuid);
-                  const nodeIndexText = nodeIndex >= 0 ? `#${nodeIndex + 1}` : "#--";
+                  const nodeIndex = nodeIndexByUuid.get(n.uuid);
+                  const nodeIndexText = nodeIndex !== undefined ? `#${nodeIndex + 1}` : "#--";
                   return (
                     <div
                       key={n.uuid}

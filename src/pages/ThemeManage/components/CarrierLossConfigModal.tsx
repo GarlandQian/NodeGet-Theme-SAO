@@ -1,18 +1,9 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import { Search, X, Check, RotateCcw, Sliders, Server, Filter } from "lucide-react";
 import type { NodeInfo, YesterdayBestScope, YesterdayBestDisplayMode } from "@/types/models";
-import { sortHomeGroupOptions } from "@/utils/homeNodes";
+import { sortHomeGroupOptions, sortNodesByWeight } from "@/utils/homeNodes";
 
-export function sortNodesByWeight(nodes: readonly NodeInfo[]): NodeInfo[] {
-  return [...nodes].sort((left, right) => {
-    const leftWeight = Number(left.weight) || 0;
-    const rightWeight = Number(right.weight) || 0;
-    if (leftWeight !== rightWeight) return leftWeight - rightWeight;
-    const nameCmp = (left.name || "").localeCompare(right.name || "", "zh-CN");
-    if (nameCmp !== 0) return nameCmp;
-    return (left.uuid || "").localeCompare(right.uuid || "");
-  });
-}
+export { sortNodesByWeight };
 
 export interface CarrierLossConfigModalProps {
   isOpen: boolean;

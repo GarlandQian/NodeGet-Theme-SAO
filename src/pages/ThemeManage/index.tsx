@@ -24,15 +24,17 @@ import { calculateYesterdayAverageScore } from "@/utils/yesterdayBestNode";
 import {
   calculateCostSummary,
   getExchangeRates,
-  readCachedExchangeRates,
+  readExchangeRateInitialData,
 } from "@/utils/cost";
 import {
+  aggregateOverviewMetrics,
   dedupeGroupLabels,
   sortHomeGroupOptions,
+  sortNodesByWeight,
 } from "@/utils/homeNodes";
 import { isHomepageMultiPingConfigured } from "@/utils/pingTasks";
 import { normalizeThemeSettings } from "@/utils/themeSettings";
-import { sortNodesByWeight } from "./components/CarrierLossConfigModal";
+import { hasTrafficData } from "@/utils/trafficStats";
 
 import {
   BODY_BOTTOM_GAP,
@@ -168,28 +170,37 @@ export function ThemeManage() {
     return normalizeThemeSettings(config?.theme_settings);
   }, [config?.theme_settings]);
 
+  const initialRateCache = useMemo(
+    () => readExchangeRateInitialData(sourceThemeSettings.costRateApiUrl),
+    [sourceThemeSettings.costRateApiUrl],
+  );
   const premiumRateQuery = useQuery({
     queryKey: ["cost-rates", sourceThemeSettings.costRateApiUrl],
     queryFn: ({ signal }) => getExchangeRates(sourceThemeSettings.costRateApiUrl, { signal }),
-    initialData: () => readCachedExchangeRates(sourceThemeSettings.costRateApiUrl, true) ?? undefined,
+    initialData: initialRateCache?.data,
+    initialDataUpdatedAt: initialRateCache?.updatedAt,
     staleTime: 60 * 60 * 1000,
     enabled: isPriceVisible && allMeta.length > 0,
     retry: 1,
   });
 
-  const premiumDetailByUuid = useMemo(() => {
-    const map = new Map<string, ReturnType<typeof calculateCostSummary>["details"][number]>();
-    if (!isPriceVisible || !premiumRateQuery.data) return map;
-    const summary = calculateCostSummary(
+  const baseCostSummary = useMemo(() => {
+    if (!isPriceVisible || !premiumRateQuery.data || allMeta.length === 0) return null;
+    return calculateCostSummary(
       allMeta,
       sourceThemeSettings.costIgnoredNodes,
       premiumRateQuery.data.rates,
       undefined,
       now,
     );
-    for (const detail of summary.details) map.set(detail.uuid, detail);
-    return map;
   }, [allMeta, now, sourceThemeSettings.costIgnoredNodes, premiumRateQuery.data, isPriceVisible]);
+
+  const premiumDetailByUuid = useMemo(() => {
+    const map = new Map<string, ReturnType<typeof calculateCostSummary>["details"][number]>();
+    if (!baseCostSummary) return map;
+    for (const detail of baseCostSummary.details) map.set(detail.uuid, detail);
+    return map;
+  }, [baseCostSummary]);
 
   const {
     draft,
@@ -345,7 +356,9 @@ export function ThemeManage() {
   const yesterdayCandidateUuids = useMemo(() => yesterdayCandidateNodes.map((n) => n.uuid), [yesterdayCandidateNodes]);
 
   const stabilityQuery = useStabilityLeaderboard(
-    yesterdayCandidateUuids, yesterdayScope, activeTab === "home" && draft.showHomeOverview,
+    yesterdayCandidateUuids,
+    yesterdayScope,
+    activeTab === "home" && draft.showHomeOverview && (yesterdayScope !== "tri" || isMultiPingConfigured),
   );
   const yesterdayBestResult = stabilityQuery.data?.best;
   const yesterdayLeaderboard = stabilityQuery.data?.leaderboard;
@@ -396,113 +409,33 @@ export function ThemeManage() {
     yesterdayScope,
   ]);
 
+  const visibleSummaries = useMemo(() => {
+    if (!nodeSummaries.length) return [];
+    const visibleUuids = new Set(allMeta.map((node) => node.uuid));
+    return nodeSummaries.filter((node) => visibleUuids.has(node.uuid));
+  }, [allMeta, nodeSummaries]);
+
   const realOverview = useMemo<OverviewData | undefined>(() => {
-    let onlineNodes = 0;
-    let offlineNodes = 0;
-    let trafficUp = 0;
-    let trafficDown = 0;
-    let netUp = 0;
-    let netDown = 0;
-    let totalCpu = 0;
-    let totalRamUsed = 0;
-    let totalRamTotal = 0;
-    let totalSwapUsed = 0;
-    let totalSwapTotal = 0;
-    let totalDiskUsed = 0;
-    let totalDiskTotal = 0;
-    let totalTcpConn = 0;
-    let totalUdpConn = 0;
-    let totalProcesses = 0;
-
-    if (nodeSummaries && nodeSummaries.length > 0) {
-      const visibleUuids = new Set(allMeta.map(node => node.uuid));
-      for (const node of nodeSummaries) {
-        if (!visibleUuids.has(node.uuid)) continue;
-        if (node.online === true) onlineNodes++;
-        else if (node.online === false) offlineNodes++;
-
-        trafficUp += node.trafficUp || 0;
-        trafficDown += node.trafficDown || 0;
-        netUp += node.netUp || 0;
-        netDown += node.netDown || 0;
-        totalCpu += node.cpuPct || 0;
-        totalRamUsed += node.ramUsed || 0;
-        totalRamTotal += node.ramTotal || 0;
-        totalSwapUsed += node.swapUsed || 0;
-        totalSwapTotal += node.swapTotal || 0;
-        totalDiskUsed += node.diskUsed || 0;
-        totalDiskTotal += node.diskTotal || 0;
-        totalTcpConn += node.connectionsTcp || 0;
-        totalUdpConn += node.connectionsUdp || 0;
-        totalProcesses += node.process || 0;
-      }
-    }
-
-    const totalNodes = allMeta.length;
-    const avgCpu = onlineNodes > 0 ? totalCpu / onlineNodes : 0;
-
-    let minUptimeSeconds = Number.POSITIVE_INFINITY;
-    let recentRebootNode: { name: string; seconds: number } | null = null;
-
-    for (const meta of allMeta) {
-      const metrics = getNodeMetricsSnapshot(meta.uuid);
-      if (metrics && metrics.online === true && Number.isFinite(metrics.uptime) && metrics.uptime > 0) {
-        if (metrics.uptime < minUptimeSeconds) {
-          minUptimeSeconds = metrics.uptime;
-          recentRebootNode = {
-            name: meta.name?.trim() || meta.uuid,
-            seconds: metrics.uptime,
-          };
-        }
-      }
-    }
-
+    const metrics = aggregateOverviewMetrics(visibleSummaries, allMeta, getNodeMetricsSnapshot);
     return {
-      totalNodes,
-      onlineNodes,
-      offlineNodes,
-      trafficUp,
-      trafficDown,
-      netUp,
-      netDown,
-      avgCpu,
-      totalRamUsed,
-      totalRamTotal,
-      ramPct: totalRamTotal > 0 ? (totalRamUsed / totalRamTotal) * 100 : 0,
-      totalDiskUsed,
-      totalDiskTotal,
-      diskPct: totalDiskTotal > 0 ? (totalDiskUsed / totalDiskTotal) * 100 : 0,
-      totalTcpConn,
-      totalUdpConn,
-      totalSwapUsed,
-      totalSwapTotal,
-      swapPct: totalSwapTotal > 0 ? (totalSwapUsed / totalSwapTotal) * 100 : 0,
-      totalProcesses,
-      totalCores: allMeta.length > 0 ? allMeta.reduce((sum, n) => sum + (n.cpu_cores || 0), 0) : 0,
-      recentRebootNode,
+      ...metrics,
+      totalNodes: allMeta.length,
       carrierLoss,
       yesterdayBestScope: yesterdayScope,
       yesterdayBest: yesterdayBestDisplay,
     };
-  }, [nodeSummaries, allMeta, carrierLoss, yesterdayScope, yesterdayBestDisplay]);
+  }, [visibleSummaries, allMeta, carrierLoss, yesterdayScope, yesterdayBestDisplay]);
 
-  const realCostSummary = useMemo(() => {
-    if (!isPriceVisible || !premiumRateQuery.data || allMeta.length === 0) return null;
-    return calculateCostSummary(
-      allMeta,
-      sourceThemeSettings.costIgnoredNodes,
-      premiumRateQuery.data.rates,
-      undefined,
-      now,
-    );
-  }, [allMeta, now, sourceThemeSettings.costIgnoredNodes, premiumRateQuery.data, isPriceVisible]);
+  const realCostSummary = baseCostSummary;
 
   const trafficUuids = useMemo(() => allMeta.map((n) => n.uuid), [allMeta]);
   const todayTrafficClock = useMinuteClock();
-  const todayTrafficQuery = useTodayTrafficStats(trafficUuids, todayTrafficClock, "summary");
+  const todayTrafficQuery = useTodayTrafficStats(trafficUuids, todayTrafficClock, "summary", false);
   const latestTrafficTotal = useMemo(() => {
-    if (!todayTrafficQuery.data?.rows.some(row => row.trafficAvailable)) return null;
-    return todayTrafficQuery.data.rows.reduce(
+    if (!todayTrafficQuery.data) return null;
+    const available = todayTrafficQuery.data.rows.filter(hasTrafficData);
+    if (available.length === 0) return null;
+    return available.reduce(
       (sum, row) => sum + row.trafficUp + row.trafficDown,
       0,
     );

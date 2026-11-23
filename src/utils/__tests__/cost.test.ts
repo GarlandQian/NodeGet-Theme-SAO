@@ -5,6 +5,8 @@ import {
   calculateCostSummary,
   formatCnyMoney,
   getExchangeRates,
+  readExchangeRateInitialData,
+  COST_RATE_PRESETS,
   isCostRateApiUrlValid,
   normalizeCostIgnoredNodes,
   normalizeCostPremiums,
@@ -553,5 +555,29 @@ describe("cost helpers", () => {
     await expect(getExchangeRates(url, { signal: controller.signal })).rejects.toThrow(
       "cancelled",
     );
+  });
+
+  it("preserves cache timestamp for direct rate hits and marks preset fallbacks as stale", () => {
+    const primaryUrl = COST_RATE_PRESETS[0]!.url;
+    const secondaryUrl = COST_RATE_PRESETS[1]!.url;
+    const timestamp = Date.now() - 10_000;
+    const entries = new Map([
+      [
+        `nodeget-sao:cost-rates:${primaryUrl}`,
+        JSON.stringify({ rates: { USD: 1, CNY: 7.2 }, time: timestamp }),
+      ],
+    ]);
+    vi.stubGlobal("localStorage", {
+      getItem: (name: string) => entries.get(name) ?? null,
+    });
+
+    expect(readExchangeRateInitialData(primaryUrl)).toEqual({
+      data: { rates: { USD: 1, CNY: 7.2 }, time: timestamp },
+      updatedAt: timestamp,
+    });
+    expect(readExchangeRateInitialData(secondaryUrl)).toEqual({
+      data: { rates: { USD: 1, CNY: 7.2 }, time: timestamp },
+      updatedAt: 0,
+    });
   });
 });
